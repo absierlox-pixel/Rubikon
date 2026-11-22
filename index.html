@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Моя игра в Discord</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #1e1f22; /* Фирменный тёмный фон Discord */
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            border: 2px solid #5865F2;
+            border-radius: 8px;
+            background-color: #2b2d31;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+        }
+        #ui {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 14px;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div>Управление: <b>W A S D</b> или <b>Стрелки</b></div>
+    <div id="status" style="color: #949ba4; margin-top: 4px;">Статус: Локальный запуск</div>
+</div>
+
+<canvas id="gameCanvas" width="800" height="600"></canvas>
+
+<!-- Подключаем официальный Discord Embedded App SDK через CDN -->
+<script type="module">
+    import { DiscordSDK } from "https://esm.sh";
+
+    // ⚠️ ВСТАВЬТЕ СЮДА ВАШ ID ПРИЛОЖЕНИЯ ИЗ DISCORD DEVELOPER PORTAL
+    const CLIENT_ID = "ВСТАВЬТЕ_ВАШ_APPLICATION_ID_СЮДА";
+
+    const statusEl = document.getElementById("status");
+
+    // Инициализация Discord SDK (если открыто внутри Discord)
+    async function initDiscord() {
+        try {
+            const discordSdk = new DiscordSDK(CLIENT_ID);
+            await discordSdk.ready();
+            statusEl.textContent = `В Discord! Комната: ${discordSdk.instanceId.slice(0, 8)}...`;
+            statusEl.style.color = "#23a55a";
+        } catch (e) {
+            // Если открыли просто в браузере для теста — игра всё равно будет работать
+            console.log("Запущено вне Discord:", e);
+        }
+    }
+
+    initDiscord();
+
+    // --- ЛОГИКА ИГРЫ ---
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Игрок
+    const player = {
+        x: canvas.width / 2,
+        y: canvas.height / 2,
+        radius: 18,
+        speed: 4,
+        color: "#5865F2"
+    };
+
+    // Отслеживание нажатых клавиш
+    const keys = {};
+    window.addEventListener("keydown", (e) => { keys[e.code] = true; });
+    window.addEventListener("keyup", (e) => { keys[e.code] = false; });
+
+    function update() {
+        if (keys["KeyW"] || keys["ArrowUp"]) player.y -= player.speed;
+        if (keys["KeyS"] || keys["ArrowDown"]) player.y += player.speed;
+        if (keys["KeyA"] || keys["ArrowLeft"]) player.x -= player.speed;
+        if (keys["KeyD"] || keys["ArrowRight"]) player.x += player.speed;
+
+        // Не даём выйти за границы плоскости
+        player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
+        player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
+    }
+
+    function drawGrid() {
+        ctx.strokeStyle = "#35373c";
+        ctx.lineWidth = 1;
+        const step = 40;
+
+        for (let x = 0; x <= canvas.width; x += step) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, canvas.height);
+            ctx.stroke();
+        }
+        for (let y = 0; y <= canvas.height; y += step) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(canvas.width, y);
+            ctx.stroke();
+        }
+    }
+
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Рисуем сетку на плоскости, чтобы ощущалось движение
+        drawGrid();
+
+        // Рисуем персонажа
+        ctx.beginPath();
+        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+        ctx.fillStyle = player.color;
+        ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#ffffff";
+        ctx.stroke();
+    }
+
+    function gameLoop() {
+        update();
+        draw();
+        requestAnimationFrame(gameLoop);
+    }
+
+    gameLoop();
+</script>
+</body>
+</html>
