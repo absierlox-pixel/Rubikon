@@ -1,142 +1,300 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Моя игра в Discord</title>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord 3D P2P Walk</title>
     <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            background-color: #1e1f22; /* Фирменный тёмный фон Discord */
-            color: #ffffff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
-        canvas {
-            border: 2px solid #5865F2;
-            border-radius: 8px;
-            background-color: #2b2d31;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-        }
+        body { margin: 0; overflow: hidden; background: #1e1f22; font-family: sans-serif; }
         #ui {
-            position: absolute;
-            top: 16px;
-            left: 16px;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 10px 14px;
-            border-radius: 8px;
-            font-size: 14px;
-            pointer-events: none;
+            position: absolute; top: 15px; left: 15px; color: white;
+            background: rgba(0, 0, 0, 0.65); padding: 12px 16px; border-radius: 8px;
+            pointer-events: none; line-height: 1.4; font-size: 14px;
         }
     </style>
+    <script src="https://unpkg.com"></script>
 </head>
 <body>
+<div id="ui">Инициализация...</div>
 
-<div id="ui">
-    <div>Управление: <b>W A S D</b> или <b>Стрелки</b></div>
-    <div id="status" style="color: #949ba4; margin-top: 4px;">Статус: Локальный запуск</div>
-</div>
-
-<canvas id="gameCanvas" width="800" height="600"></canvas>
-
-<!-- Подключаем официальный Discord Embedded App SDK через CDN -->
 <script type="module">
-    import { DiscordSDK } from "https://esm.sh";
+    import * as THREE from 'https://esm.sh';
+    import { DiscordSDK } from 'https://esm.sh';
 
-    // ⚠️ ВСТАВЬТЕ СЮДА ВАШ ID ПРИЛОЖЕНИЯ ИЗ DISCORD DEVELOPER PORTAL
-    const CLIENT_ID = "1574065476131233812";
+    const CLIENT_ID = '1574065476131233812';
+    const ui = document.getElementById('ui');
 
-    const statusEl = document.getElementById("status");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 20, 65);
 
-    // Инициализация Discord SDK (если открыто внутри Discord)
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.65));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight.position.set(15, 25, 15);
+    dirLight.castShadow = true;
+    scene.add(dirLight);
+
+    const ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(100, 100),
+        new THREE.MeshStandardMaterial({ color: 0x4caf50 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    scene.add(new THREE.GridHelper(100, 50, 0x2e7d32, 0x388e3c));
+
+    const myId = 'p_' + Math.random().toString(36).substring(2, 9);
+    const myColor = Math.floor(Math.random() * 0xffffff);
+    let myName = 'Игрок_' + Math.floor(100 + Math.random() * 900);
+    let roomId = 'test_room_123';
+
+    const players = new Map();
+
+    function createNameTag(text) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 256;
+        canvas.height = 64;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.beginPath();
+        ctx.roundRect(10, 10, 236, 44, 10);
+        ctx.fill();
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.fillText(text, 128, 40);
+
+        const sprite = new THREE.Sprite(
+            new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas) })
+        );
+        sprite.scale.set(2.5, 0.6, 1);
+        sprite.position.y = 1.9;
+        return sprite;
+    }
+
+    function upsertPlayer(id, name, color, x = 0, z = 0) {
+        if (players.has(id)) {
+            const p = players.get(id);
+            p.targetX = x;
+            p.targetZ = z;
+            return p;
+        }
+
+        const group = new THREE.Group();
+        const body = new THREE.Mesh(
+            new THREE.BoxGeometry(1, 1.5, 1),
+            new THREE.MeshStandardMaterial({ color })
+        );
+        body.position.y = 0.75;
+        body.castShadow = true;
+        group.add(body);
+        group.add(createNameTag(name));
+        group.position.set(x, 0, z);
+        scene.add(group);
+
+        const pObj = { id, name, color, group, targetX: x, targetZ: z };
+        players.set(id, pObj);
+        return pObj;
+    }
+
+    function removePlayer(id) {
+        if (players.has(id)) {
+            scene.remove(players.get(id).group);
+            players.delete(id);
+        }
+    }
+
+    const me = upsertPlayer(myId, myName, myColor, 0, 0);
+
     async function initDiscord() {
         try {
             const discordSdk = new DiscordSDK(CLIENT_ID);
             await discordSdk.ready();
-            statusEl.textContent = `В Discord! Комната: ${discordSdk.instanceId.slice(0, 8)}...`;
-            statusEl.style.color = "#23a55a";
-        } catch (e) {
-            // Если открыли просто в браузере для теста — игра всё равно будет работать
-            console.log("Запущено вне Discord:", e);
+            roomId = 'dc_' + discordSdk.instanceId.replace(/[^a-zA-Z0-9]/g, '');
+            updateUI('Подключение к комнате Discord...');
+        } catch (err) {
+            updateUI('Режим браузера');
         }
+        startP2P();
+    }
+
+    function updateUI(status) {
+        ui.innerHTML = `<b>${status}</b><br>Вы: ${myName} | Игроков онлайн: ${players.size}<br>Управление: WASD / Стрелки`;
+    }
+
+    let isHost = false;
+    let peer = null;
+    const hostConnections = new Map();
+    let connToHost = null;
+
+    function startP2P() {
+        peer = new Peer(roomId);
+
+        peer.on('open', () => {
+            isHost = true;
+            updateUI('Вы хост комнаты');
+        });
+
+        peer.on('connection', (conn) => {
+            if (!isHost) return;
+
+            conn.on('data', (data) => {
+                if (data.type === 'join') {
+                    conn.playerId = data.id;
+                    hostConnections.set(data.id, conn);
+                    upsertPlayer(data.id, data.name, data.color, data.x, data.z);
+                    broadcastState();
+                    updateUI('Вы хост комнаты');
+                } else if (data.type === 'move') {
+                    const p = players.get(data.id);
+                    if (p) {
+                        p.targetX = data.x;
+                        p.targetZ = data.z;
+                        broadcastState();
+                    }
+                }
+            });
+
+            conn.on('close', () => {
+                if (conn.playerId) {
+                    hostConnections.delete(conn.playerId);
+                    removePlayer(conn.playerId);
+                    broadcastState();
+                    updateUI('Вы хост комнаты');
+                }
+            });
+        });
+
+        peer.on('error', (err) => {
+            if (err.type === 'unavailable-id') {
+                joinAsClient();
+            } else {
+                updateUI('Ошибка сети P2P, переподключение...');
+                setTimeout(startP2P, 2000);
+            }
+        });
+    }
+
+    function joinAsClient() {
+        isHost = false;
+        peer = new Peer();
+
+        peer.on('open', () => {
+            connToHost = peer.connect(roomId);
+
+            connToHost.on('open', () => {
+                updateUI('Подключено к комнате');
+                connToHost.send({
+                    type: 'join',
+                    id: myId,
+                    name: myName,
+                    color: myColor,
+                    x: me.group.position.x,
+                    z: me.group.position.z
+                });
+            });
+
+            connToHost.on('data', (data) => {
+                if (data.type === 'state') {
+                    const activeIds = new Set();
+                    data.players.forEach(p => {
+                        activeIds.add(p.id);
+                        if (p.id !== myId) {
+                            upsertPlayer(p.id, p.name, p.color, p.x, p.z);
+                        }
+                    });
+                    for (const id of players.keys()) {
+                        if (!activeIds.has(id)) removePlayer(id);
+                    }
+                    updateUI('Подключено к комнате');
+                }
+            });
+
+            connToHost.on('close', () => {
+                updateUI('Хост вышел, смена хоста...');
+                for (const id of Array.from(players.keys())) {
+                    if (id !== myId) removePlayer(id);
+                }
+                peer.destroy();
+                setTimeout(startP2P, 1000);
+            });
+        });
+    }
+
+    function broadcastState() {
+        if (!isHost) return;
+        const list = Array.from(players.values()).map(p => ({
+            id: p.id,
+            name: p.name,
+            color: p.color,
+            x: p.id === myId ? me.group.position.x : p.targetX,
+            z: p.id === myId ? me.group.position.z : p.targetZ
+        }));
+        const msg = { type: 'state', players: list };
+        hostConnections.forEach(conn => {
+            if (conn.open) conn.send(msg);
+        });
+    }
+
+    const keys = {};
+    window.addEventListener('keydown', (e) => keys[e.code] = true);
+    window.addEventListener('keyup', (e) => keys[e.code] = false);
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    let lastNetSend = 0;
+
+    function animate() {
+        requestAnimationFrame(animate);
+
+        const speed = 0.14;
+        let moved = false;
+
+        if (keys['KeyW'] || keys['ArrowUp']) { me.group.position.z -= speed; moved = true; }
+        if (keys['KeyS'] || keys['ArrowDown']) { me.group.position.z += speed; moved = true; }
+        if (keys['KeyA'] || keys['ArrowLeft']) { me.group.position.x -= speed; moved = true; }
+        if (keys['KeyD'] || keys['ArrowRight']) { me.group.position.x += speed; moved = true; }
+
+        camera.position.set(me.group.position.x, 8, me.group.position.z + 11);
+        camera.lookAt(me.group.position.x, 1, me.group.position.z);
+
+        const now = Date.now();
+        if (moved && now - lastNetSend > 50) {
+            if (isHost) {
+                broadcastState();
+            } else if (connToHost && connToHost.open) {
+                connToHost.send({
+                    type: 'move',
+                    id: myId,
+                    x: me.group.position.x,
+                    z: me.group.position.z
+                });
+            }
+            lastNetSend = now;
+        }
+
+        for (const [id, p] of players.entries()) {
+            if (id !== myId) {
+                p.group.position.x += (p.targetX - p.group.position.x) * 0.25;
+                p.group.position.z += (p.targetZ - p.group.position.z) * 0.25;
+            }
+        }
+
+        renderer.render(scene, camera);
     }
 
     initDiscord();
-
-    // --- ЛОГИКА ИГРЫ ---
-    const canvas = document.getElementById("gameCanvas");
-    const ctx = canvas.getContext("2d");
-
-    // Игрок
-    const player = {
-        x: canvas.width / 2,
-        y: canvas.height / 2,
-        radius: 18,
-        speed: 4,
-        color: "#5865F2"
-    };
-
-    // Отслеживание нажатых клавиш
-    const keys = {};
-    window.addEventListener("keydown", (e) => { keys[e.code] = true; });
-    window.addEventListener("keyup", (e) => { keys[e.code] = false; });
-
-    function update() {
-        if (keys["KeyW"] || keys["ArrowUp"]) player.y -= player.speed;
-        if (keys["KeyS"] || keys["ArrowDown"]) player.y += player.speed;
-        if (keys["KeyA"] || keys["ArrowLeft"]) player.x -= player.speed;
-        if (keys["KeyD"] || keys["ArrowRight"]) player.x += player.speed;
-
-        // Не даём выйти за границы плоскости
-        player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, player.x));
-        player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, player.y));
-    }
-
-    function drawGrid() {
-        ctx.strokeStyle = "#35373c";
-        ctx.lineWidth = 1;
-        const step = 40;
-
-        for (let x = 0; x <= canvas.width; x += step) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, canvas.height);
-            ctx.stroke();
-        }
-        for (let y = 0; y <= canvas.height; y += step) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(canvas.width, y);
-            ctx.stroke();
-        }
-    }
-
-    function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        // Рисуем сетку на плоскости, чтобы ощущалось движение
-        drawGrid();
-
-        // Рисуем персонажа
-        ctx.beginPath();
-        ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
-        ctx.fillStyle = player.color;
-        ctx.fill();
-        ctx.lineWidth = 3;
-        ctx.strokeStyle = "#ffffff";
-        ctx.stroke();
-    }
-
-    function gameLoop() {
-        update();
-        draw();
-        requestAnimationFrame(gameLoop);
-    }
-
-    gameLoop();
+    animate();
 </script>
 </body>
 </html>
