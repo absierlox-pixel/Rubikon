@@ -3,118 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rubikon — 3D Arena</title>
+  <title>Рубикон</title>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div id="app">
     <canvas id="game-canvas"></canvas>
-    <canvas id="overlay-canvas"></canvas>
-
     <div class="crosshair" id="crosshair"></div>
 
-    <div class="death-overlay hidden" id="death-overlay">
-      <div class="death-card">
-        <div class="death-title">ВЫ ПОВЕРЖЕНЫ</div>
-        <div class="death-sub">Возрождение через <span id="respawn-timer">3.0</span> с</div>
-      </div>
-    </div>
-
-    <header class="hud-top">
-      <div class="brand-card">
-        <div class="status-dot" id="status-dot"></div>
-        <div class="brand-info">
-          <span class="brand-title">Rubikon 3D</span>
-          <span class="status-text" id="status-text">Подключение...</span>
-        </div>
-        <span class="role-badge" id="role-badge">P2P</span>
-      </div>
-
-      <div class="hud-actions">
-        <span class="kills-badge" id="kills-text" title="Победы">⚔ 0</span>
-        <button class="hud-btn" id="btn-copy-link" type="button" title="Скопировать ссылку на комнату">
-          <span>🔗 Ссылка</span>
-        </button>
-        <button class="hud-btn" id="btn-room" type="button" title="Комната и настройки">
-          <span id="room-label">Комната</span>
-        </button>
-        <button class="hud-btn" id="btn-bots" type="button" title="Включить или убрать ботов">
-          <span>+ Боты</span>
-        </button>
-        <button class="hud-btn icon-btn" id="btn-sound" type="button" title="Звук">
-          <span id="sound-icon">🔊</span>
-        </button>
-      </div>
-    </header>
-
-    <aside class="party-panel" id="party-panel">
-      <div class="party-header">
-        <span>Бойцы</span>
-        <span class="party-count" id="party-count">1</span>
-      </div>
-      <ul class="party-list" id="party-list"></ul>
-    </aside>
-
-    <div class="hud-bottom">
-      <div class="hp-bar-wrap">
-        <div class="hp-bar-bg">
-          <div class="hp-bar-fill" id="hp-fill" style="width: 100%"></div>
-        </div>
-        <span class="hp-bar-text" id="hp-text">100 / 100</span>
-      </div>
-
-      <div class="emote-bar">
-        <button class="emote-btn" data-emote="👋" type="button">👋</button>
-        <button class="emote-btn" data-emote="🔥" type="button">🔥</button>
-        <button class="emote-btn" data-emote="😂" type="button">😂</button>
-        <button class="emote-btn" data-emote="⭐" type="button">⭐</button>
-      </div>
-      <div class="controls-hint">
-        <span>WASD — идти</span>
-        <span>Мышь — обзор</span>
-        <span>ЛКМ — удар</span>
-        <span>Пробел — прыжок</span>
-        <span>Shift — рывок</span>
-        <span>Esc — курсор</span>
-      </div>
-    </div>
-
-    <div class="joystick-zone" id="joystick-zone">
-      <div class="joystick-base" id="joystick-base">
-        <div class="joystick-knob" id="joystick-knob"></div>
-      </div>
-    </div>
-
-    <div class="modal-backdrop hidden" id="room-modal">
-      <div class="modal-card">
-        <h2 class="modal-title">Rubikon — Настройки</h2>
-        <div class="field-group">
-          <label for="input-name">Имя игрока</label>
-          <input id="input-name" type="text" maxlength="18" placeholder="Игрок">
-        </div>
-        <div class="field-group">
-          <label for="input-room">Код комнаты (первый зашедший — хост)</label>
-          <div class="input-row">
-            <input id="input-room" type="text" maxlength="24" placeholder="rubikon-party">
-            <button class="primary-btn" id="btn-copy-room" type="button">Ссылка</button>
+    <!-- GTA 5 Radial Weapon Wheel (Key B) -->
+    <div class="weapon-wheel hidden" id="weapon-wheel">
+      <div class="wheel-container">
+        <div class="wheel-ring" id="wheel-ring"></div>
+        <div class="wheel-center">
+          <div class="wheel-weapon-name" id="wheel-weapon-name">Кулаки</div>
+          <div class="wheel-weapon-ammo" id="wheel-weapon-ammo">Ближний бой</div>
+          <div class="wheel-stats">
+            <div class="stat-row">
+              <span>Урон</span>
+              <div class="stat-track"><div class="stat-fill" id="stat-damage"></div></div>
+            </div>
+            <div class="stat-row">
+              <span>Темп</span>
+              <div class="stat-track"><div class="stat-fill" id="stat-rate"></div></div>
+            </div>
+            <div class="stat-row">
+              <span>Дальн.</span>
+              <div class="stat-track"><div class="stat-fill" id="stat-range"></div></div>
+            </div>
           </div>
         </div>
-        <div class="field-group">
-          <label for="input-server">WebSocket-сервер (пусто = авто P2P)</label>
-          <input id="input-server" type="text" maxlength="140" placeholder="Оставь пустым для P2P">
-        </div>
-        <div class="field-group">
-          <label>Цвет</label>
-          <div class="color-picker" id="color-picker"></div>
-        </div>
-        <div class="modal-footer">
-          <button class="ghost-btn" id="btn-close-modal" type="button">Закрыть</button>
-          <button class="primary-btn" id="btn-apply-room" type="button">Применить</button>
-        </div>
       </div>
     </div>
-
-    <div class="toast hidden" id="toast"></div>
   </div>
 
   <script>

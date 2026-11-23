@@ -14,7 +14,7 @@ export class SoundFX {
       this.ctx.resume().catch(() => {});
     }
     if (this.ctx && !this.noiseBuffer) {
-      const length = Math.floor(this.ctx.sampleRate * 0.35);
+      const length = Math.floor(this.ctx.sampleRate * 0.4);
       const buf = this.ctx.createBuffer(1, length, this.ctx.sampleRate);
       const data = buf.getChannelData(0);
       for (let i = 0; i < length; i++) {
@@ -24,15 +24,8 @@ export class SoundFX {
     }
   }
 
-  toggleMute() {
-    this.muted = !this.muted;
-    return this.muted;
-  }
-
   playTone(freq, duration, type = "sine", gainVal = 0.06, endFreq = null) {
-    if (this.muted || !this.ctx) {
-      return;
-    }
+    if (this.muted || !this.ctx) return;
     try {
       const now = this.ctx.currentTime;
       const osc = this.ctx.createOscillator();
@@ -51,22 +44,20 @@ export class SoundFX {
     } catch {}
   }
 
-  playNoise(duration, filterFreq, gainVal = 0.08, endFreq = null) {
-    if (this.muted || !this.ctx || !this.noiseBuffer) {
-      return;
-    }
+  playNoise(duration, filterFreq, gainVal = 0.08, endFreq = null, filterType = "bandpass") {
+    if (this.muted || !this.ctx || !this.noiseBuffer) return;
     try {
       const now = this.ctx.currentTime;
       const src = this.ctx.createBufferSource();
       src.buffer = this.noiseBuffer;
 
       const filter = this.ctx.createBiquadFilter();
-      filter.type = "bandpass";
+      filter.type = filterType;
       filter.frequency.setValueAtTime(filterFreq, now);
       if (endFreq !== null) {
         filter.frequency.exponentialRampToValueAtTime(Math.max(80, endFreq), now + duration);
       }
-      filter.Q.value = 1.4;
+      filter.Q.value = 1.1;
 
       const gain = this.ctx.createGain();
       gain.gain.setValueAtTime(gainVal, now);
@@ -80,36 +71,33 @@ export class SoundFX {
     } catch {}
   }
 
-  playSwing(combo = 0) {
-    const startF = combo === 2 ? 900 : 1200;
-    const endF = combo === 2 ? 220 : 380;
-    this.playNoise(0.14, startF, 0.09, endF);
+  playGunshot() {
+    // Crisp AK-74 crack + low punch + bolt clack
+    this.playNoise(0.14, 1750, 0.22, 260, "lowpass");
+    this.playTone(155, 0.09, "sawtooth", 0.14, 42);
+    this.playNoise(0.045, 3400, 0.10, 1200, "highpass");
+  }
+
+  playReload() {
+    this.playNoise(0.06, 2200, 0.06, 900);
+    setTimeout(() => this.playTone(320, 0.05, "square", 0.04, 180), 260);
+  }
+
+  playSwing() {
+    this.playNoise(0.11, 950, 0.06, 320);
   }
 
   playHit(heavy = false) {
-    this.playTone(heavy ? 120 : 165, heavy ? 0.18 : 0.12, "triangle", heavy ? 0.18 : 0.13, 38);
-    this.playNoise(heavy ? 0.12 : 0.08, heavy ? 600 : 900, heavy ? 0.14 : 0.09, 180);
+    this.playTone(heavy ? 115 : 155, 0.12, "triangle", heavy ? 0.16 : 0.11, 40);
+    this.playNoise(0.07, 750, 0.09, 200);
   }
 
   playDeath() {
-    this.playTone(140, 0.35, "sawtooth", 0.12, 32);
-    this.playNoise(0.24, 380, 0.13, 90);
+    this.playTone(125, 0.30, "triangle", 0.12, 34);
+    this.playNoise(0.20, 340, 0.11, 90);
   }
 
   playJump() {
-    this.playTone(190, 0.11, "sine", 0.06, 360);
-  }
-
-  playDash() {
-    this.playNoise(0.16, 750, 0.08, 240);
-    this.playTone(300, 0.12, "triangle", 0.06, 150);
-  }
-
-  playEmote() {
-    this.playTone(540, 0.09, "sine", 0.06, 680);
-  }
-
-  playJoin() {
-    this.playTone(460, 0.14, "sine", 0.06, 620);
+    this.playTone(170, 0.09, "sine", 0.04, 290);
   }
 }
