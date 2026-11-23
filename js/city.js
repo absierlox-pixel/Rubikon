@@ -1,4 +1,4 @@
-// Deterministic large 260x260m city layout shared by physics collisions and 3D renderer
+// Deterministic large 260x260m city layout (no cars) with padded camera raycasting
 
 function seededRandom(seed) {
   let s = seed % 2147483647;
@@ -13,12 +13,9 @@ export function generateCityLayout() {
   const rand = seededRandom(20261123);
   const buildings = [];
   const trees = [];
-  const cars = [];
   const streetlights = [];
   const sidewalks = [];
 
-  // Grid of city blocks around a central open plaza (0,0)
-  // Roads run along x = -84, -42, 0, 42, 84 and z = -84, -42, 0, 42, 84 (road width ~14m)
   const blockCenters = [-105, -63, -21, 21, 63, 105];
   const blockSize = 26;
 
@@ -26,30 +23,24 @@ export function generateCityLayout() {
     for (let bzIdx = 0; bzIdx < blockCenters.length; bzIdx++) {
       const cx = blockCenters[bxIdx];
       const cz = blockCenters[bzIdx];
-
-      // Keep the 4 inner blocks around (0,0) partly open as a central city square / park
       const isCentral = Math.abs(cx) === 21 && Math.abs(cz) === 21;
 
       sidewalks.push({ x: cx, z: cz, w: blockSize, d: blockSize });
 
-      // Streetlights at block corners
       streetlights.push(
         { x: cx - blockSize / 2 + 0.8, z: cz - blockSize / 2 + 0.8, rot: Math.PI * 0.25 },
         { x: cx + blockSize / 2 - 0.8, z: cz + blockSize / 2 - 0.8, rot: -Math.PI * 0.75 }
       );
 
       if (isCentral) {
-        // Park corners with trees + one medium corner building on the outer edge
         const signX = cx > 0 ? 1 : -1;
         const signZ = cz > 0 ? 1 : -1;
         const bw = 11 + rand() * 3;
         const bd = 11 + rand() * 3;
         const bh = 12 + rand() * 10;
-        const bpx = cx + signX * 4.5;
-        const bpz = cz + signZ * 4.5;
         buildings.push({
-          x: bpx,
-          z: bpz,
+          x: cx + signX * 4.5,
+          z: cz + signZ * 4.5,
           w: bw,
           d: bd,
           h: bh,
@@ -62,7 +53,6 @@ export function generateCityLayout() {
         continue;
       }
 
-      // Outer blocks: 1 large building or 2 medium buildings + courtyard trees
       const split = rand() > 0.45;
       if (split) {
         const horiz = rand() > 0.5;
@@ -98,35 +88,8 @@ export function generateCityLayout() {
     }
   }
 
-  // Parked cars along main avenues (with AABB collision)
-  const carColors = [0x9e2a2b, 0x2f4858, 0xc9cbd0, 0x24262b, 0x3b6e52, 0xb58938];
-  const carSpots = [
-    { x: -6.2, z: -24, rot: 0 },
-    { x: 6.2, z: -15, rot: Math.PI },
-    { x: -6.2, z: 18, rot: 0 },
-    { x: 6.2, z: 27, rot: Math.PI },
-    { x: -25, z: -6.2, rot: Math.PI / 2 },
-    { x: 22, z: 6.2, rot: -Math.PI / 2 },
-    { x: -48.2, z: -18, rot: 0 },
-    { x: 48.2, z: 14, rot: Math.PI },
-    { x: -36, z: 48.2, rot: Math.PI / 2 },
-    { x: 34, z: -48.2, rot: -Math.PI / 2 }
-  ];
-  for (let i = 0; i < carSpots.length; i++) {
-    const cs = carSpots[i];
-    const isEW = Math.abs(Math.sin(cs.rot)) > 0.5;
-    cars.push({
-      x: cs.x,
-      z: cs.z,
-      rot: cs.rot,
-      w: isEW ? 4.4 : 2.0,
-      d: isEW ? 2.0 : 4.4,
-      h: 1.55,
-      color: carColors[i % carColors.length]
-    });
-  }
-
-  // Unified colliders (buildings + cars)
+  // Building + perimeter wall colliders
+  const half = 130;
   const colliders = [
     ...buildings.map((b) => ({
       minX: b.x - b.w / 2,
@@ -135,16 +98,13 @@ export function generateCityLayout() {
       maxZ: b.z + b.d / 2,
       maxY: b.h
     })),
-    ...cars.map((c) => ({
-      minX: c.x - c.w / 2,
-      maxX: c.x + c.w / 2,
-      minZ: c.z - c.d / 2,
-      maxZ: c.z + c.d / 2,
-      maxY: c.h
-    }))
+    { minX: -half - 2, maxX: half + 2, minZ: -half - 2, maxZ: -half + 0.7, maxY: 6 },
+    { minX: -half - 2, maxX: half + 2, minZ: half - 0.7, maxZ: half + 2, maxY: 6 },
+    { minX: -half - 2, maxX: -half + 0.7, minZ: -half - 2, maxZ: half + 2, maxY: 6 },
+    { minX: half - 0.7, maxX: half + 2, minZ: -half - 2, maxZ: half + 2, maxY: 6 }
   ];
 
-  return { buildings, trees, cars, streetlights, sidewalks, colliders };
+  return { buildings, trees, streetlights, sidewalks, colliders };
 }
 
 export const CITY_LAYOUT = generateCityLayout();
@@ -165,7 +125,6 @@ export function resolveCityCollision(x, z, radius) {
         rx += dx * push;
         rz += dz * push;
       } else {
-        // Inside AABB: push out to nearest edge
         const dLeft = Math.abs(rx - box.minX);
         const dRight = Math.abs(box.maxX - rx);
         const dTop = Math.abs(rz - box.minZ);
@@ -181,52 +140,64 @@ export function resolveCityCollision(x, z, radius) {
   return { x: rx, z: rz };
 }
 
-// Ray vs AABB intersection for bullets & camera wall-avoidance
-export function raycastCity(ox, oy, oz, dx, dy, dz, maxDist) {
+// Ray vs AABB intersection with optional padding (prevents camera near-plane clipping)
+export function raycastCity(ox, oy, oz, dx, dy, dz, maxDist, pad = 0) {
   let closestT = maxDist;
   for (const box of CITY_LAYOUT.colliders) {
+    const minX = box.minX - pad;
+    const maxX = box.maxX + pad;
+    const minZ = box.minZ - pad;
+    const maxZ = box.maxZ + pad;
+    const maxY = box.maxY + pad;
+
     let tmin = 0;
     let tmax = closestT;
 
-    // X slab
     if (Math.abs(dx) < 1e-6) {
-      if (ox < box.minX || ox > box.maxX) continue;
+      if (ox < minX || ox > maxX) continue;
     } else {
-      let t1 = (box.minX - ox) / dx;
-      let t2 = (box.maxX - ox) / dx;
+      let t1 = (minX - ox) / dx;
+      let t2 = (maxX - ox) / dx;
       if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
       tmin = Math.max(tmin, t1);
       tmax = Math.min(tmax, t2);
       if (tmin > tmax) continue;
     }
 
-    // Y slab (0 .. maxY)
     if (Math.abs(dy) < 1e-6) {
-      if (oy < 0 || oy > box.maxY) continue;
+      if (oy < 0 || oy > maxY) continue;
     } else {
       let t1 = (0 - oy) / dy;
-      let t2 = (box.maxY - oy) / dy;
+      let t2 = (maxY - oy) / dy;
       if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
       tmin = Math.max(tmin, t1);
       tmax = Math.min(tmax, t2);
       if (tmin > tmax) continue;
     }
 
-    // Z slab
     if (Math.abs(dz) < 1e-6) {
-      if (oz < box.minZ || oz > box.maxZ) continue;
+      if (oz < minZ || oz > maxZ) continue;
     } else {
-      let t1 = (box.minZ - oz) / dz;
-      let t2 = (box.maxZ - oz) / dz;
+      let t1 = (minZ - oz) / dz;
+      let t2 = (maxZ - oz) / dz;
       if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
       tmin = Math.max(tmin, t1);
       tmax = Math.min(tmax, t2);
       if (tmin > tmax) continue;
     }
 
-    if (tmin > 0.05 && tmin < closestT) {
+    if (tmin >= 0 && tmin < closestT) {
       closestT = tmin;
     }
   }
+
+  // Also check ground plane (y = pad)
+  if (dy < -1e-5 && oy > pad) {
+    const tg = (pad - oy) / dy;
+    if (tg >= 0 && tg < closestT) {
+      closestT = tg;
+    }
+  }
+
   return closestT;
 }

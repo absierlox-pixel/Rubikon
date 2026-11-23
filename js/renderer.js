@@ -8,8 +8,14 @@ import {
   createDenimTexture,
   createFaceTexture
 } from "./textures.js";
-import { createDetailedAK74 } from "./weapons.js";
+import { createWeaponMesh } from "./weapons.js";
 import { RagdollInstance } from "./ragdoll.js";
+
+function angleDiff(from, to) {
+  let d = ((to - from + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
 
 function createDaySkyTexture() {
   const c = document.createElement("canvas");
@@ -26,7 +32,6 @@ function createDaySkyTexture() {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 256);
 
-  // Soft clouds
   ctx.fillStyle = "rgba(255, 250, 244, 0.22)";
   for (let i = 0; i < 28; i++) {
     const cx = Math.random() * 512;
@@ -35,7 +40,6 @@ function createDaySkyTexture() {
     ctx.ellipse(cx, cy, 28 + Math.random() * 44, 6 + Math.random() * 10, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-
   return new THREE.CanvasTexture(c);
 }
 
@@ -50,10 +54,10 @@ export class PlaneRenderer3D {
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#9ab3cb");
-    this.scene.fog = new THREE.FogExp2("#9eb3c7", 0.0052);
+    this.scene.fog = new THREE.FogExp2("#9eb3c7", 0.0048);
 
-    this.camera = new THREE.PerspectiveCamera(56, 1, 0.15, 360);
-    this.camera.position.set(0, 4, 10);
+    this.camera = new THREE.PerspectiveCamera(60, 1, 0.08, 360);
+    this.scene.add(this.camera);
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
@@ -68,22 +72,25 @@ export class PlaneRenderer3D {
       this.renderer.outputEncoding = THREE.sRGBEncoding;
     }
 
-    // Shared character textures
     this.denimTex = createDenimTexture();
     this.faceTex = createFaceTexture();
     this.fabricCache = new Map();
 
     this.playerMeshes = new Map();
+    this.rocketMeshes = new Map();
     this.ragdolls = [];
     this.particles = [];
     this.tracers = [];
     this.muzzleFlashes = [];
+    this.explosions = [];
     this.shakeIntensity = 0;
 
-    this.camPos = new THREE.Vector3(0, 3.5, 10);
-    this.camLook = new THREE.Vector3(0, 1.6, 0);
+    this.camDistCurrent = 4.6;
+    this.camYawSway = 0;
+    this.prevCamYaw = 0;
 
     this.buildCityWorld();
+    this.buildFPSViewmodel();
     this.resize();
   }
 
@@ -96,14 +103,12 @@ export class PlaneRenderer3D {
   }
 
   buildCityWorld() {
-    // Sky dome
     const sky = new THREE.Mesh(
       new THREE.SphereGeometry(280, 24, 16),
       new THREE.MeshBasicMaterial({ map: createDaySkyTexture(), side: THREE.BackSide, fog: false })
     );
     this.scene.add(sky);
 
-    // Natural daylight lighting
     const hemi = new THREE.HemisphereLight(0xcbe0ff, 0x4f5056, 0.85);
     this.scene.add(hemi);
 
@@ -124,7 +129,7 @@ export class PlaneRenderer3D {
     this.scene.add(sun.target);
     this.sunLight = sun;
 
-    // 1. Asphalt city ground
+    // Asphalt ground
     const asphaltTex = createAsphaltTexture();
     const ground = new THREE.Mesh(
       new THREE.PlaneGeometry(CONFIG.WORLD_SIZE, CONFIG.WORLD_SIZE),
@@ -134,7 +139,7 @@ export class PlaneRenderer3D {
     ground.receiveShadow = true;
     this.scene.add(ground);
 
-    // Road dashed center markings
+    // Road center markings
     const markingMat = new THREE.MeshBasicMaterial({ color: 0xd9d4c4 });
     const roadCoords = [-84, -42, 0, 42, 84];
     const dashGeoH = new THREE.PlaneGeometry(3.2, 0.22);
@@ -154,7 +159,7 @@ export class PlaneRenderer3D {
       }
     }
 
-    // 2. Raised concrete sidewalks
+    // Sidewalks
     const sidewalkTex = createSidewalkTexture();
     const sidewalkMat = new THREE.MeshStandardMaterial({
       map: sidewalkTex,
@@ -168,7 +173,7 @@ export class PlaneRenderer3D {
       this.scene.add(slab);
     }
 
-    // 3. Textured multi-story buildings
+    // Textured buildings
     const facadeMats = [0, 1, 2, 3].map((idx) => {
       const tex = createBuildingFacadeTexture(idx);
       return new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8, metalness: 0.08 });
@@ -178,7 +183,6 @@ export class PlaneRenderer3D {
 
     for (const b of CITY_LAYOUT.buildings) {
       const baseMat = facadeMats[b.style % facadeMats.length];
-      // Clone texture repeat per building proportions so windows stay realistic size
       const sideMat = baseMat.clone();
       sideMat.map = baseMat.map.clone();
       sideMat.map.needsUpdate = true;
@@ -191,7 +195,6 @@ export class PlaneRenderer3D {
       mesh.receiveShadow = true;
       this.scene.add(mesh);
 
-      // Rooftop parapet trim + AC unit
       const rim = new THREE.Mesh(new THREE.BoxGeometry(b.w + 0.3, 0.45, b.d + 0.3), roofMat);
       rim.position.set(b.x, b.h + 0.22, b.z);
       this.scene.add(rim);
@@ -202,42 +205,7 @@ export class PlaneRenderer3D {
       this.scene.add(ac);
     }
 
-    // 4. Parked cars
-    const wheelMat = new THREE.MeshStandardMaterial({ color: 0x16171a, roughness: 0.85 });
-    const glassMat = new THREE.MeshStandardMaterial({ color: 0x1b2735, roughness: 0.15, metalness: 0.8 });
-    for (const car of CITY_LAYOUT.cars) {
-      const cg = new THREE.Group();
-      cg.position.set(car.x, 0, car.z);
-      cg.rotation.y = car.rot;
-
-      const paintMat = new THREE.MeshStandardMaterial({ color: car.color, roughness: 0.32, metalness: 0.55 });
-      const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.68, 4.3), paintMat);
-      body.position.y = 0.62;
-      body.castShadow = true;
-      body.receiveShadow = true;
-      cg.add(body);
-
-      const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.66, 0.56, 2.2), paintMat);
-      cabin.position.set(0, 1.18, -0.15);
-      cabin.castShadow = true;
-      cg.add(cabin);
-
-      const wind = new THREE.Mesh(new THREE.BoxGeometry(1.68, 0.44, 2.02), glassMat);
-      wind.position.set(0, 1.18, -0.15);
-      cg.add(wind);
-
-      const wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.24, 12);
-      for (const [wx, wz] of [[-0.92, 1.35], [0.92, 1.35], [-0.92, -1.35], [0.92, -1.35]]) {
-        const w = new THREE.Mesh(wheelGeo, wheelMat);
-        w.rotation.z = Math.PI / 2;
-        w.position.set(wx, 0.34, wz);
-        cg.add(w);
-      }
-
-      this.scene.add(cg);
-    }
-
-    // 5. Urban trees
+    // Trees
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4d3a2c, roughness: 0.95 });
     const leafMat = new THREE.MeshStandardMaterial({ color: 0x355c37, roughness: 0.85 });
     for (const t of CITY_LAYOUT.trees) {
@@ -263,7 +231,7 @@ export class PlaneRenderer3D {
       this.scene.add(tg);
     }
 
-    // 6. Streetlights
+    // Streetlights
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x383c44, roughness: 0.5, metalness: 0.7 });
     const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff3d1 });
     for (const sl of CITY_LAYOUT.streetlights) {
@@ -287,7 +255,7 @@ export class PlaneRenderer3D {
       this.scene.add(sg);
     }
 
-    // 7. Perimeter city boundary walls
+    // Perimeter boundary walls
     const half = CONFIG.WORLD_SIZE / 2;
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x4b4e54, roughness: 0.9 });
     for (const w of [
@@ -303,7 +271,54 @@ export class PlaneRenderer3D {
     }
   }
 
-  // Smooth textured humanoid rig with rounded joints & attachable detailed AK-74
+  // Dedicated First-Person Viewmodel attached to camera
+  buildFPSViewmodel() {
+    this.fpsRoot = new THREE.Group();
+    this.fpsRoot.visible = false;
+    this.camera.add(this.fpsRoot);
+
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe4b896, roughness: 0.65 });
+    const sleeveMat = new THREE.MeshStandardMaterial({ map: this.getFabricTexture("#3a5f8a"), roughness: 0.78 });
+
+    // Left & right FPS hands for melee / weapon support
+    const makeFpsHand = (side) => {
+      const g = new THREE.Group();
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.42, 10), sleeveMat);
+      arm.rotation.x = Math.PI / 2;
+      arm.position.z = 0.24;
+      g.add(arm);
+      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
+      g.add(fist);
+      g.position.set(side * 0.24, -0.24, -0.42);
+      this.fpsRoot.add(g);
+      return g;
+    };
+
+    this.fpsLeftHand = makeFpsHand(-1);
+    this.fpsRightHand = makeFpsHand(1);
+
+    // FPS Weapon holder (points along -Z which is camera forward!)
+    this.fpsWeaponHolder = new THREE.Group();
+    this.fpsWeaponHolder.rotation.y = Math.PI; // Our weapons point +Z, camera looks -Z
+    this.fpsRoot.add(this.fpsWeaponHolder);
+
+    this.fpsWeapons = {};
+    for (const id of ["knuckles", "glock", "ak74", "awp", "minigun", "rpg"]) {
+      const wm = createWeaponMesh(id);
+      if (wm) {
+        wm.group.visible = false;
+        if (id === "knuckles") {
+          wm.group.rotation.y = Math.PI;
+          this.fpsRightHand.add(wm.group);
+        } else {
+          this.fpsWeaponHolder.add(wm.group);
+        }
+        this.fpsWeapons[id] = wm;
+      }
+    }
+  }
+
+  // Smooth textured humanoid rig with weapon mounts on RIGHT HAND & TORSO
   createPlayerMesh(player) {
     const root = new THREE.Group();
 
@@ -317,28 +332,11 @@ export class PlaneRenderer3D {
       roughness: 0.86,
       metalness: 0.04
     });
-    const skinMat = new THREE.MeshStandardMaterial({
-      color: 0xe4b896,
-      roughness: 0.66,
-      metalness: 0.02
-    });
-    const faceMat = new THREE.MeshStandardMaterial({
-      map: this.faceTex,
-      roughness: 0.66,
-      metalness: 0.02
-    });
-    const hairMat = new THREE.MeshStandardMaterial({
-      color: 0x221b16,
-      roughness: 0.85,
-      metalness: 0.04
-    });
-    const bootMat = new THREE.MeshStandardMaterial({
-      color: 0x1a1c20,
-      roughness: 0.72,
-      metalness: 0.14
-    });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe4b896, roughness: 0.66, metalness: 0.02 });
+    const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTex, roughness: 0.66, metalness: 0.02 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x221b16, roughness: 0.85, metalness: 0.04 });
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.72, metalness: 0.14 });
 
-    // Pelvis
     const pelvis = new THREE.Group();
     pelvis.position.y = 0.98;
     root.add(pelvis);
@@ -353,7 +351,6 @@ export class PlaneRenderer3D {
     belt.position.y = 0.09;
     pelvis.add(belt);
 
-    // Torso
     const torso = new THREE.Group();
     torso.position.y = 0.11;
     pelvis.add(torso);
@@ -374,7 +371,6 @@ export class PlaneRenderer3D {
     collar.position.y = 0.60;
     torso.add(collar);
 
-    // Head
     const headPivot = new THREE.Group();
     headPivot.position.y = 0.62;
     torso.add(headPivot);
@@ -386,7 +382,7 @@ export class PlaneRenderer3D {
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.185, 20, 16), faceMat);
     head.position.y = 0.22;
     head.scale.set(0.90, 1.06, 0.96);
-    head.rotation.y = -Math.PI / 2; // Align painted face texture forward (+Z)
+    head.rotation.y = -Math.PI / 2;
     head.castShadow = true;
     headPivot.add(head);
 
@@ -400,15 +396,12 @@ export class PlaneRenderer3D {
     hair.castShadow = true;
     headPivot.add(hair);
 
-    // Smooth articulated arms (with shoulder & elbow spheres)
     const makeArm = (side) => {
       const shoulder = new THREE.Group();
       shoulder.position.set(side * 0.29, 0.52, 0);
       torso.add(shoulder);
 
-      const shJoint = new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 10), jacketMat);
-      shJoint.castShadow = true;
-      shoulder.add(shJoint);
+      shoulder.add(new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 10), jacketMat));
 
       const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.070, 0.30, 10), jacketMat);
       upper.position.y = -0.15;
@@ -419,17 +412,18 @@ export class PlaneRenderer3D {
       elbow.position.y = -0.31;
       shoulder.add(elbow);
 
-      const elbJoint = new THREE.Mesh(new THREE.SphereGeometry(0.068, 8, 8), jacketMat);
-      elbow.add(elbJoint);
+      elbow.add(new THREE.Mesh(new THREE.SphereGeometry(0.068, 8, 8), jacketMat));
 
       const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.054, 0.28, 10), skinMat);
       forearm.position.y = -0.14;
       forearm.castShadow = true;
       elbow.add(forearm);
 
-      const hand = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
+      const hand = new THREE.Group();
       hand.position.y = -0.30;
-      hand.castShadow = true;
+      const handMesh = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
+      handMesh.castShadow = true;
+      hand.add(handMesh);
       elbow.add(hand);
 
       return { shoulder, elbow, hand };
@@ -438,22 +432,30 @@ export class PlaneRenderer3D {
     const leftArm = makeArm(-1);
     const rightArm = makeArm(1);
 
-    // Attach detailed AK-74 to torso weapon mount (aligned cleanly with two-handed grip)
-    const ak = createDetailedAK74();
-    const gunMount = new THREE.Group();
-    gunMount.position.set(0.18, 0.36, 0.32);
-    gunMount.add(ak.group);
-    gunMount.visible = false;
-    torso.add(gunMount);
+    // Weapon mount attached to torso (aligned precisely to hands in every pose)
+    const weaponMount = new THREE.Group();
+    torso.add(weaponMount);
 
-    // Smooth articulated legs
+    const weapons = {};
+    for (const id of ["knuckles", "glock", "ak74", "awp", "minigun", "rpg"]) {
+      const wm = createWeaponMesh(id);
+      if (wm) {
+        wm.group.visible = false;
+        if (id === "knuckles") {
+          rightArm.hand.add(wm.group);
+        } else {
+          weaponMount.add(wm.group);
+        }
+        weapons[id] = wm;
+      }
+    }
+
     const makeLeg = (side) => {
       const hip = new THREE.Group();
       hip.position.set(side * 0.135, -0.05, 0);
       pelvis.add(hip);
 
-      const hipJoint = new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), pantsMat);
-      hip.add(hipJoint);
+      hip.add(new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), pantsMat));
 
       const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.082, 0.42, 10), pantsMat);
       thigh.position.y = -0.21;
@@ -464,8 +466,7 @@ export class PlaneRenderer3D {
       knee.position.y = -0.43;
       hip.add(knee);
 
-      const kneeJoint = new THREE.Mesh(new THREE.SphereGeometry(0.080, 8, 8), pantsMat);
-      knee.add(kneeJoint);
+      knee.add(new THREE.Mesh(new THREE.SphereGeometry(0.080, 8, 8), pantsMat));
 
       const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.062, 0.40, 10), pantsMat);
       shin.position.y = -0.20;
@@ -493,128 +494,168 @@ export class PlaneRenderer3D {
       rightArm,
       leftLeg,
       rightLeg,
-      gunMount,
-      akMuzzle: ak.muzzle,
+      weaponMount,
+      weapons,
       jacketMat
     };
   }
 
+  // Full procedural bone animation: head/torso look-at twist, turn-in-place stepping, turn lean, weapon poses
   animateRig(rig, player, dt) {
     const spd = player.moveSpeed || 0;
     const isMoving = spd > 0.35;
     const isSprinting = Boolean(player.sprinting && isMoving);
+    const turningInPlace = !isMoving && (player.turnStepTimer || 0) > 0;
     const phase = player.walkPhase || 0;
     const inAir = (player.y || 0) > 0.08;
-    const hasGun = player.weapon === "ak74";
+    const wid = player.weapon || "fists";
+    const rec = player.recoil || 0;
     const breath = Math.sin(this.time * 2.2 + (player.x || 0));
 
-    rig.gunMount.visible = hasGun;
+    // Toggle visible weapon mesh
+    for (const [id, wm] of Object.entries(rig.weapons)) {
+      wm.group.visible = id === wid;
+      if (id === "minigun" && wm.barrelsGroup && id === wid) {
+        wm.barrelsGroup.rotation.z += (player.barrelSpin || 0) * dt;
+      }
+      if (id === "rpg" && wm.warhead && id === wid) {
+        wm.warhead.visible = (player.reloadingTimer || 0) <= 0;
+      }
+    }
+
+    // Compute upper-body twist toward aimYaw relative to pelvis angle
+    const aimDelta = Math.max(-1.25, Math.min(1.25, angleDiff(player.angle || 0, player.aimYaw ?? player.angle ?? 0)));
+    const aimPitch = Math.max(-0.55, Math.min(0.55, player.aimPitch || 0));
+    const turnLean = Math.max(-0.22, Math.min(0.22, -(player.turnVel || 0) * 0.045));
 
     let pelvisY = 0.98;
+    let pelvisRoll = turnLean * (isMoving ? 0.8 : 0.25);
     let torsoPitch = 0;
-    let torsoYaw = 0;
+    let torsoYaw = aimDelta * 0.55;
+    let headYaw = aimDelta * 0.45;
+    let headPitch = aimPitch * 0.65;
+
     let lHipX = 0, rHipX = 0, lKneeX = 0, rKneeX = 0;
     let lShX = 0, lShZ = 0.08, lElbX = -0.18;
     let rShX = 0, rShZ = -0.08, rElbX = -0.18;
 
-    // Lower body + torso locomotion
+    // Lower body gait / turn-in-place stepping
     if (inAir) {
-      lHipX = -0.48; rHipX = 0.22;
-      lKneeX = 0.78; rKneeX = 0.40;
-      torsoPitch = 0.10;
+      lHipX = -0.45; rHipX = 0.22;
+      lKneeX = 0.78; rKneeX = 0.38;
+      torsoPitch = 0.08;
     } else if (isSprinting) {
       const s = Math.sin(phase);
       const c = Math.cos(phase);
       pelvisY = 0.96 + Math.abs(c) * 0.085;
-      torsoPitch = 0.24;
-      torsoYaw = -s * 0.16;
-      lHipX = s * 0.92;
-      rHipX = -s * 0.92;
-      lKneeX = Math.max(0, -c) * 1.25 + 0.12;
-      rKneeX = Math.max(0, c) * 1.25 + 0.12;
-      lShX = -s * 0.95;
-      rShX = s * 0.95;
-      lElbX = -0.85 - Math.max(0, s) * 0.65;
-      rElbX = -0.85 - Math.max(0, -s) * 0.65;
+      torsoPitch = 0.22;
+      torsoYaw += -s * 0.14;
+      lHipX = s * 0.88;
+      rHipX = -s * 0.88;
+      lKneeX = Math.max(0, -c) * 1.2 + 0.10;
+      rKneeX = Math.max(0, c) * 1.2 + 0.10;
+      lShX = -s * 0.9;
+      rShX = s * 0.9;
+      lElbX = -0.8 - Math.max(0, s) * 0.6;
+      rElbX = -0.8 - Math.max(0, -s) * 0.6;
     } else if (isMoving) {
+      const stride = Math.min(1, spd / CONFIG.WALK_SPEED);
       const s = Math.sin(phase);
       const c = Math.cos(phase);
-      pelvisY = 0.98 + Math.abs(c) * 0.04;
-      torsoPitch = 0.06;
-      torsoYaw = -s * 0.07;
-      lHipX = s * 0.52;
-      rHipX = -s * 0.52;
-      lKneeX = Math.max(0, -c) * 0.68 + 0.05;
-      rKneeX = Math.max(0, c) * 0.68 + 0.05;
-      lShX = -s * 0.42;
-      rShX = s * 0.42;
-      lElbX = -0.22 - Math.max(0, s) * 0.35;
-      rElbX = -0.22 - Math.max(0, -s) * 0.35;
+      pelvisY = 0.98 + Math.abs(c) * 0.038 * stride;
+      torsoPitch = 0.05 * stride;
+      torsoYaw += -s * 0.06 * stride;
+      lHipX = s * 0.52 * stride;
+      rHipX = -s * 0.52 * stride;
+      lKneeX = Math.max(0, -c) * 0.68 * stride + 0.04;
+      rKneeX = Math.max(0, c) * 0.68 * stride + 0.04;
+      lShX = -s * 0.42 * stride;
+      rShX = s * 0.42 * stride;
+      lElbX = -0.20 - Math.max(0, s) * 0.32 * stride;
+      rElbX = -0.20 - Math.max(0, -s) * 0.32 * stride;
+    } else if (turningInPlace) {
+      // Procedural foot lifting while rotating on the spot!
+      const s = Math.sin(phase);
+      const c = Math.cos(phase);
+      pelvisY = 0.97 + Math.abs(s) * 0.025;
+      lHipX = Math.min(0, -s) * 0.32;
+      rHipX = Math.min(0, s) * 0.32;
+      lKneeX = Math.max(0, s) * 0.52;
+      rKneeX = Math.max(0, -s) * 0.52;
     } else {
       pelvisY = 0.98 + breath * 0.012;
       torsoPitch = 0.02 + breath * 0.01;
-      lShX = -0.06; rShX = -0.06;
+      lShX = -0.05; rShX = -0.05;
       lElbX = -0.18; rElbX = -0.18;
     }
 
-    // Upper body weapon or melee override
-    if (hasGun) {
-      const rec = player.recoil || 0;
-      if (isSprinting) {
-        // Tactical low-ready sprint hold
-        rig.gunMount.position.set(0.14, 0.28, 0.28);
-        rig.gunMount.rotation.set(0.28, -0.45, 0.12);
-        rShX = -0.75; rShZ = -0.12; rElbX = -1.1;
-        lShX = -0.82; lShZ = 0.35; lElbX = -1.25;
-      } else {
-        // Two-handed aimed rifle stance + recoil kickback
-        rig.gunMount.position.set(0.16, 0.40 + rec * 0.02, 0.33 - rec * 0.08);
-        rig.gunMount.rotation.set(-rec * 0.14, 0, 0);
-        torsoYaw = -0.18;
-        rShX = -1.22 - rec * 0.18;
-        rShZ = -0.14;
-        rElbX = -0.72;
-        lShX = -1.18 - rec * 0.14;
-        lShZ = 0.48;
-        lElbX = -0.68;
-      }
+    // Weapon-specific bone poses & exact hand alignment
+    if (wid === "glock") {
+      rig.weaponMount.position.set(0.18, 0.46, 0.52 - rec * 0.04);
+      rig.weaponMount.rotation.set(aimPitch - rec * 0.25, 0, 0);
+      rShX = -1.42 + aimPitch - rec * 0.18; rShZ = -0.12; rElbX = -0.18;
+      lShX = -1.38 + aimPitch - rec * 0.14; lShZ = 0.42;  lElbX = -0.24;
+    } else if (wid === "ak74" || wid === "awp") {
+      // Straight shouldered rifle alignment — right hand on pistol grip, left hand on wooden handguard
+      rig.weaponMount.position.set(0.16, 0.42 + rec * 0.015, 0.36 - rec * 0.07);
+      rig.weaponMount.rotation.set(aimPitch - rec * 0.12, 0, 0);
+      torsoYaw = aimDelta * 0.7 - 0.16;
+      rShX = -1.10 + aimPitch - rec * 0.12; rShZ = -0.18; rElbX = -0.95;
+      lShX = -1.25 + aimPitch - rec * 0.10; lShZ = 0.48;  lElbX = -0.68;
+    } else if (wid === "minigun") {
+      // Heavy underslung hip-fire stance
+      rig.weaponMount.position.set(0.14, 0.12, 0.38 - rec * 0.03);
+      rig.weaponMount.rotation.set(aimPitch * 0.6, 0, 0);
+      torsoPitch += 0.08;
+      rShX = -0.58; rShZ = -0.15; rElbX = -0.82;
+      lShX = -0.82; lShZ = 0.38;  lElbX = -0.65;
+    } else if (wid === "rpg") {
+      // Over-right-shoulder rocket launcher stance
+      rig.weaponMount.position.set(0.24, 0.62, 0.18 - rec * 0.10);
+      rig.weaponMount.rotation.set(aimPitch - rec * 0.15, 0, 0);
+      rShX = -1.55 + aimPitch; rShZ = -0.05; rElbX = -1.15;
+      lShX = -1.50 + aimPitch; lShZ = 0.46;  lElbX = -0.85;
     } else if ((player.attackTimer || 0) > 0) {
-      // Natural unarmed punch (no white slash ring!)
+      // Clean melee punch (fists or brass knuckles)
       const dur = player.attackDuration || 0.34;
       const p = 1 - player.attackTimer / dur;
       const punch = Math.sin(Math.min(1, p * 1.45) * Math.PI);
-      if ((player.attackCombo || 0) === 0) {
-        torsoYaw = -0.62 * punch;
-        torsoPitch += 0.16 * punch;
-        rShX = -1.55 * punch - 0.15;
-        rElbX = -0.12;
-        lShX = -0.45;
-        lElbX = -1.1;
+      if ((player.attackCombo || 0) === 0 || wid === "knuckles") {
+        torsoYaw -= 0.58 * punch;
+        torsoPitch += 0.15 * punch;
+        rShX = -1.55 * punch - 0.15; rElbX = -0.12;
+        lShX = -0.45; lElbX = -1.1;
       } else {
-        torsoYaw = 0.65 * punch;
-        torsoPitch += 0.16 * punch;
-        lShX = -1.50 * punch - 0.15;
-        lElbX = -0.15;
-        rShX = -0.45;
-        rElbX = -1.1;
+        torsoYaw += 0.62 * punch;
+        torsoPitch += 0.15 * punch;
+        lShX = -1.50 * punch - 0.15; lElbX = -0.15;
+        rShX = -0.45; rElbX = -1.1;
       }
     }
 
-    // Subtle red hit flash
+    // Reload dip
+    if ((player.reloadingTimer || 0) > 0) {
+      rig.weaponMount.rotation.x += 0.45;
+      rig.weaponMount.position.y -= 0.08;
+    }
+
+    // Hit flash
     if ((player.hitFlash || 0) > 0) {
-      torsoPitch -= 0.22 * (player.hitFlash / 0.2);
+      torsoPitch -= 0.20 * (player.hitFlash / 0.2);
       rig.jacketMat.emissive.setHex(0x881118);
-      rig.jacketMat.emissiveIntensity = (player.hitFlash / 0.2) * 0.7;
+      rig.jacketMat.emissiveIntensity = (player.hitFlash / 0.2) * 0.65;
     } else {
       rig.jacketMat.emissive.setHex(0x000000);
       rig.jacketMat.emissiveIntensity = 0;
     }
 
-    const k = Math.min(1, dt * 18);
+    const k = Math.min(1, dt * 16);
     rig.pelvis.position.y += (pelvisY - rig.pelvis.position.y) * k;
+    rig.pelvis.rotation.z += (pelvisRoll - rig.pelvis.rotation.z) * k;
     rig.torso.rotation.x += (torsoPitch - rig.torso.rotation.x) * k;
     rig.torso.rotation.y += (torsoYaw - rig.torso.rotation.y) * k;
-    rig.headPivot.rotation.y += (-torsoYaw * 0.55 - rig.headPivot.rotation.y) * k;
+    rig.headPivot.rotation.y += (headYaw - rig.headPivot.rotation.y) * k;
+    rig.headPivot.rotation.x += (headPitch - rig.headPivot.rotation.x) * k;
 
     rig.leftLeg.hip.rotation.x += (lHipX - rig.leftLeg.hip.rotation.x) * k;
     rig.rightLeg.hip.rotation.x += (rHipX - rig.rightLeg.hip.rotation.x) * k;
@@ -630,17 +671,76 @@ export class PlaneRenderer3D {
     rig.rightArm.elbow.rotation.x += (rElbX - rig.rightArm.elbow.rotation.x) * k;
   }
 
+  updateFPSViewmodel(game, dt) {
+    const lp = game.localPlayer;
+    const isFPS = game.viewMode === "fps" && lp.alive && !game.scoped;
+    this.fpsRoot.visible = isFPS;
+    if (!isFPS) return;
+
+    const wid = lp.weapon;
+    const isMelee = wid === "fists" || wid === "knuckles";
+    const rec = lp.recoil || 0;
+    const bob = lp.moveSpeed > 0.35 && lp.y <= 0.05 ? Math.sin(lp.walkPhase) * 0.016 : 0;
+    const bobX = lp.moveSpeed > 0.35 && lp.y <= 0.05 ? Math.cos(lp.walkPhase * 0.5) * 0.012 : 0;
+
+    // Smooth mouse sway
+    const yawDelta = angleDiff(this.prevCamYaw, game.camYaw);
+    this.prevCamYaw = game.camYaw;
+    this.camYawSway += (Math.max(-0.08, Math.min(0.08, yawDelta * 1.4)) - this.camYawSway) * Math.min(1, dt * 12);
+
+    this.fpsLeftHand.visible = isMelee;
+    this.fpsRightHand.visible = isMelee;
+
+    for (const [id, wm] of Object.entries(this.fpsWeapons)) {
+      wm.group.visible = id === wid;
+      if (id === "minigun" && wm.barrelsGroup && id === wid) {
+        wm.barrelsGroup.rotation.z += (lp.barrelSpin || 0) * dt;
+      }
+      if (id === "rpg" && wm.warhead && id === wid) {
+        wm.warhead.visible = (lp.reloadingTimer || 0) <= 0;
+      }
+    }
+
+    if (isMelee) {
+      let rPunch = 0, lPunch = 0;
+      if ((lp.attackTimer || 0) > 0) {
+        const p = 1 - lp.attackTimer / (lp.attackDuration || 0.34);
+        const s = Math.sin(Math.min(1, p * 1.5) * Math.PI);
+        if (lp.attackCombo === 0 || wid === "knuckles") rPunch = s;
+        else lPunch = s;
+      }
+      this.fpsRightHand.position.set(0.24 - rPunch * 0.14 + this.camYawSway, -0.24 + bob + rPunch * 0.08, -0.40 - rPunch * 0.28);
+      this.fpsLeftHand.position.set(-0.24 + lPunch * 0.14 + this.camYawSway, -0.24 - bob + lPunch * 0.08, -0.40 - lPunch * 0.28);
+    } else {
+      const reloadDip = (lp.reloadingTimer || 0) > 0 ? -0.18 : 0;
+      const basePos = wid === "glock"
+        ? [0.22, -0.20, -0.42]
+        : wid === "minigun"
+        ? [0.26, -0.32, -0.52]
+        : wid === "rpg"
+        ? [0.24, -0.16, -0.32]
+        : [0.22, -0.21, -0.42]; // ak74, awp
+
+      this.fpsWeaponHolder.position.set(
+        basePos[0] + bobX + this.camYawSway,
+        basePos[1] + bob + reloadDip - rec * 0.015,
+        basePos[2] + rec * 0.09
+      );
+      this.fpsWeaponHolder.rotation.set(rec * 0.16 + reloadDip * 1.4, Math.PI, 0);
+    }
+  }
+
   spawnTracer(ox, oy, oz, ex, ey, ez) {
     const pts = [new THREE.Vector3(ox, oy, oz), new THREE.Vector3(ex, ey, ez)];
     const geo = new THREE.BufferGeometry().setFromPoints(pts);
-    const mat = new THREE.LineBasicMaterial({ color: 0xffe49e, transparent: true, opacity: 0.75 });
+    const mat = new THREE.LineBasicMaterial({ color: 0xffe49e, transparent: true, opacity: 0.78 });
     const line = new THREE.Line(geo, mat);
     this.scene.add(line);
     this.tracers.push({ line, mat, age: 0, maxAge: 0.065 });
   }
 
-  spawnMuzzleFlash(x, y, z) {
-    const geo = new THREE.SphereGeometry(0.14, 6, 6);
+  spawnMuzzleFlash(x, y, z, scale = 1) {
+    const geo = new THREE.SphereGeometry(0.12 * scale, 6, 6);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffd269, transparent: true, opacity: 0.95 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(x, y, z);
@@ -648,60 +748,79 @@ export class PlaneRenderer3D {
     this.muzzleFlashes.push({ mesh, mat, age: 0, maxAge: 0.05 });
   }
 
+  spawnExplosion(x, y, z) {
+    const fireball = new THREE.Mesh(
+      new THREE.SphereGeometry(1.0, 14, 12),
+      new THREE.MeshBasicMaterial({ color: 0xff7b24, transparent: true, opacity: 0.92 })
+    );
+    fireball.position.set(x, Math.max(0.5, y), z);
+    this.scene.add(fireball);
+    this.explosions.push({ mesh: fireball, mat: fireball.material, age: 0, maxAge: 0.55 });
+    this.spawnImpactParticles(x, Math.max(0.5, y), z, 0xffaa33, 24);
+    this.spawnImpactParticles(x, Math.max(0.5, y), z, 0x333333, 18);
+  }
+
   spawnImpactParticles(x, y, z, colorHex, count = 10) {
     for (let i = 0; i < count; i++) {
-      const geo = new THREE.BoxGeometry(0.065, 0.065, 0.065);
+      const geo = new THREE.BoxGeometry(0.08, 0.08, 0.08);
       const mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 1 });
       const mesh = new THREE.Mesh(geo, mat);
       mesh.position.set(x, y, z);
       this.scene.add(mesh);
-      const spd = 2.5 + Math.random() * 5.5;
+      const spd = 2.5 + Math.random() * 8;
       const a = Math.random() * Math.PI * 2;
       this.particles.push({
         mesh, mat,
         vx: Math.cos(a) * spd,
-        vy: 1.5 + Math.random() * 4.2,
+        vy: 2.0 + Math.random() * 6.5,
         vz: Math.sin(a) * spd,
         age: 0,
-        maxAge: 0.25 + Math.random() * 0.22
+        maxAge: 0.30 + Math.random() * 0.30
       });
     }
   }
 
-  handleEvents(events, sound) {
+  handleEvents(events, game, sound) {
     for (const ev of events) {
       if (ev.type === "swing") {
-        if (sound) sound.playSwing();
+        if (sound) sound.playSwing(ev.heavy);
       } else if (ev.type === "shot") {
-        // Use actual 3D muzzle world position if rig exists
         let mx = ev.ox, my = ev.oy, mz = ev.oz;
-        const rig = this.playerMeshes.get(ev.id);
-        if (rig && rig.akMuzzle) {
-          const wp = new THREE.Vector3();
-          rig.akMuzzle.getWorldPosition(wp);
-          mx = wp.x; my = wp.y; mz = wp.z;
+        if (ev.id === game.localId && game.viewMode === "fps" && !game.scoped) {
+          const wm = this.fpsWeapons[ev.weaponId];
+          if (wm && wm.muzzle) {
+            const wp = new THREE.Vector3();
+            wm.muzzle.getWorldPosition(wp);
+            mx = wp.x; my = wp.y; mz = wp.z;
+          }
+        } else {
+          const rig = this.playerMeshes.get(ev.id);
+          const wm = rig && rig.weapons[ev.weaponId];
+          if (wm && wm.muzzle) {
+            const wp = new THREE.Vector3();
+            wm.muzzle.getWorldPosition(wp);
+            mx = wp.x; my = wp.y; mz = wp.z;
+          }
         }
-        this.spawnMuzzleFlash(mx, my, mz);
+        this.spawnMuzzleFlash(mx, my, mz, ev.weaponId === "awp" ? 1.5 : 1.0);
         this.spawnTracer(mx, my, mz, ev.ex, ev.ey, ev.ez);
-        if (ev.hitWall) {
-          this.spawnImpactParticles(ev.ex, ev.ey, ev.ez, 0xc9c6be, 8);
-        }
-        this.shakeIntensity = Math.max(this.shakeIntensity, 0.09);
-        if (sound) sound.playGunshot();
+        if (ev.hitWall) this.spawnImpactParticles(ev.ex, ev.ey, ev.ez, 0xc9c6be, 8);
+        this.shakeIntensity = Math.max(this.shakeIntensity, ev.weaponId === "awp" ? 0.18 : 0.06);
+        if (sound) sound.playWeaponFire(ev.weaponId);
+      } else if (ev.type === "rpg_fire") {
+        this.shakeIntensity = Math.max(this.shakeIntensity, 0.22);
+        if (sound) sound.playWeaponFire("rpg");
+      } else if (ev.type === "explosion") {
+        this.spawnExplosion(ev.x, ev.y, ev.z);
+        this.shakeIntensity = Math.max(this.shakeIntensity, 0.55);
+        if (sound) sound.playExplosion();
       } else if (ev.type === "reload") {
         if (sound) sound.playReload();
       } else if (ev.type === "hit") {
         this.spawnImpactParticles(ev.x, ev.y, ev.z, 0xb8222a, ev.heavy ? 14 : 8);
-        this.shakeIntensity = Math.max(this.shakeIntensity, ev.heavy ? 0.22 : 0.10);
         if (sound) sound.playHit(ev.heavy);
       } else if (ev.type === "death") {
-        const rag = new RagdollInstance(
-          this.scene,
-          { x: ev.x, y: ev.y, z: ev.z },
-          ev.angle || 0,
-          ev.color,
-          ev.impulse
-        );
+        const rag = new RagdollInstance(this.scene, { x: ev.x, y: ev.y, z: ev.z }, ev.angle || 0, ev.color, ev.impulse);
         this.ragdolls.push(rag);
         if (sound) sound.playDeath();
       } else if (ev.type === "jump") {
@@ -715,7 +834,6 @@ export class PlaneRenderer3D {
     this.dpr = Math.min(window.devicePixelRatio || 1, 2);
     this.width = Math.max(1, rect.width);
     this.height = Math.max(1, rect.height);
-
     this.camera.aspect = this.width / this.height;
     this.camera.updateProjectionMatrix();
     this.renderer.setPixelRatio(this.dpr);
@@ -723,13 +841,14 @@ export class PlaneRenderer3D {
   }
 
   adjustZoom(delta) {
-    this.zoom = Math.max(0.65, Math.min(1.6, this.zoom + delta));
+    this.zoom = Math.max(0.65, Math.min(1.5, this.zoom + delta));
   }
 
   render(game, dt = 0.016, sound = null) {
     this.time += dt;
-    this.handleEvents(game.consumeEvents(), sound);
+    this.handleEvents(game.consumeEvents(), game, sound);
 
+    // Sync players
     for (const [id, rig] of this.playerMeshes.entries()) {
       if (!game.players.has(id)) {
         this.scene.remove(rig.root);
@@ -743,7 +862,8 @@ export class PlaneRenderer3D {
         rig = this.createPlayerMesh(player);
         this.playerMeshes.set(id, rig);
       }
-      rig.root.visible = player.alive !== false;
+      const hideLocalInFPS = id === game.localId && (game.viewMode === "fps" || game.scoped);
+      rig.root.visible = player.alive !== false && !hideLocalInFPS;
       if (rig.root.visible) {
         rig.root.position.set(player.x, player.y || 0, player.z);
         rig.root.rotation.y = player.angle || 0;
@@ -751,15 +871,47 @@ export class PlaneRenderer3D {
       }
     }
 
-    // Update physics ragdolls
+    // Sync flying RPG rockets
+    const activeRocketIds = new Set();
+    for (const r of game.rockets) {
+      activeRocketIds.add(r.id);
+      let mesh = this.rocketMeshes.get(r.id);
+      if (!mesh) {
+        mesh = new THREE.Group();
+        const body = new THREE.Mesh(
+          new THREE.ConeGeometry(0.09, 0.48, 8),
+          new THREE.MeshStandardMaterial({ color: 0x3d4d34, roughness: 0.5 })
+        );
+        body.rotation.x = Math.PI / 2;
+        const flame = new THREE.Mesh(
+          new THREE.SphereGeometry(0.11, 6, 6),
+          new THREE.MeshBasicMaterial({ color: 0xffaa22 })
+        );
+        flame.position.z = -0.28;
+        mesh.add(body, flame);
+        this.scene.add(mesh);
+        this.rocketMeshes.set(r.id, mesh);
+      }
+      mesh.position.set(r.x, r.y, r.z);
+      mesh.lookAt(r.x + r.vx, r.y + r.vy, r.z + r.vz);
+      if (Math.random() < 0.7) {
+        this.spawnImpactParticles(r.x, r.y, r.z, 0xdddddd, 1);
+      }
+    }
+    for (const [rid, mesh] of this.rocketMeshes.entries()) {
+      if (!activeRocketIds.has(rid)) {
+        this.scene.remove(mesh);
+        this.rocketMeshes.delete(rid);
+      }
+    }
+
+    // Update ragdolls, tracers, muzzle flashes, explosions, particles
     for (let i = this.ragdolls.length - 1; i >= 0; i--) {
       if (!this.ragdolls[i].update(dt)) {
         this.ragdolls[i].dispose();
         this.ragdolls.splice(i, 1);
       }
     }
-
-    // Update tracers
     for (let i = this.tracers.length - 1; i >= 0; i--) {
       const tr = this.tracers[i];
       tr.age += dt;
@@ -771,8 +923,6 @@ export class PlaneRenderer3D {
         this.tracers.splice(i, 1);
       }
     }
-
-    // Update muzzle flashes
     for (let i = this.muzzleFlashes.length - 1; i >= 0; i--) {
       const mf = this.muzzleFlashes[i];
       mf.age += dt;
@@ -785,8 +935,19 @@ export class PlaneRenderer3D {
         this.muzzleFlashes.splice(i, 1);
       }
     }
-
-    // Update impact particles
+    for (let i = this.explosions.length - 1; i >= 0; i--) {
+      const ex = this.explosions[i];
+      ex.age += dt;
+      const t = ex.age / ex.maxAge;
+      ex.mesh.scale.setScalar(1 + t * 8.5);
+      ex.mat.opacity = Math.max(0, (1 - t) * 0.9);
+      if (ex.age >= ex.maxAge) {
+        this.scene.remove(ex.mesh);
+        ex.mesh.geometry.dispose();
+        ex.mat.dispose();
+        this.explosions.splice(i, 1);
+      }
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.age += dt;
@@ -803,53 +964,27 @@ export class PlaneRenderer3D {
       }
     }
 
-    // Keep sunlight shadow frustum centered on player
+    // Center shadow frustum on player
     const lp = game.localPlayer;
     if (this.sunLight) {
       this.sunLight.position.set(lp.x + 45, 72, lp.z + 32);
       this.sunLight.target.position.set(lp.x, 0, lp.z);
     }
 
-    // Clean GTA 5-style third-person over-the-shoulder camera with wall collision
+    // Dynamic FOV (AWP sniper scope zoom vs normal)
+    const targetFov = game.scoped ? 18 : (game.viewMode === "fps" ? 74 : 58);
+    if (Math.abs(this.camera.fov - targetFov) > 0.1) {
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 16);
+      this.camera.updateProjectionMatrix();
+    }
+
+    // Camera positioning: 1st-Person vs 3rd-Person with PADDED anti-clipping collision
     const yaw = game.camYaw;
     const pitch = game.camPitch;
-    const hasGun = lp.weapon === "ak74";
-    const baseDist = (hasGun ? 3.8 : 4.8) * this.zoom;
-    const shoulder = hasGun ? 0.52 : 0.32;
-
-    const pivotX = lp.x + Math.cos(yaw) * shoulder;
-    const pivotY = (lp.y || 0) + 1.58;
-    const pivotZ = lp.z - Math.sin(yaw) * shoulder;
-
-    // Direction from pivot backward to camera
     const cosP = Math.cos(pitch);
     const backX = Math.sin(yaw) * cosP;
     const backY = Math.sin(pitch);
     const backZ = Math.cos(yaw) * cosP;
-
-    // Raycast against city buildings so camera never clips inside walls
-    const safeDist = Math.max(
-      1.1,
-      raycastCity(pivotX, pivotY, pivotZ, backX, backY, backZ, baseDist) - 0.35
-    );
-
-    const desiredCamX = pivotX + backX * safeDist;
-    const desiredCamY = Math.max(0.65, pivotY + backY * safeDist);
-    const desiredCamZ = pivotZ + backZ * safeDist;
-
-    // Look straight forward along the camera ray from pivot (aligns perfectly with crosshair)
-    const lookX = pivotX - backX * 14;
-    const lookY = pivotY - backY * 14;
-    const lookZ = pivotZ - backZ * 14;
-
-    const smooth = Math.min(1, dt * 22);
-    this.camPos.x += (desiredCamX - this.camPos.x) * smooth;
-    this.camPos.y += (desiredCamY - this.camPos.y) * smooth;
-    this.camPos.z += (desiredCamZ - this.camPos.z) * smooth;
-
-    this.camLook.x += (lookX - this.camLook.x) * smooth;
-    this.camLook.y += (lookY - this.camLook.y) * smooth;
-    this.camLook.z += (lookZ - this.camLook.z) * smooth;
 
     let sx = 0, sy = 0;
     if (this.shakeIntensity > 0.004) {
@@ -858,9 +993,54 @@ export class PlaneRenderer3D {
       this.shakeIntensity *= Math.exp(-16 * dt);
     }
 
-    this.camera.position.set(this.camPos.x + sx, this.camPos.y + sy, this.camPos.z);
-    this.camera.lookAt(this.camLook);
+    if (game.viewMode === "fps" || game.scoped) {
+      const eyeX = lp.x;
+      const eyeY = (lp.y || 0) + 1.66;
+      const eyeZ = lp.z;
+      this.camera.position.set(eyeX + sx * 0.25, eyeY + sy * 0.25, eyeZ);
+      this.camera.lookAt(eyeX - backX * 20, eyeY - backY * 20, eyeZ - backZ * 20);
+    } else {
+      const hasGun = lp.weapon !== "fists" && lp.weapon !== "knuckles";
+      const desiredDist = (hasGun ? 3.8 : 4.7) * this.zoom;
+      const shoulder = hasGun ? 0.48 : 0.28;
 
+      // Cast first from character center to shoulder pivot so pivot itself never enters a wall!
+      const centerX = lp.x;
+      const centerY = (lp.y || 0) + 1.56;
+      const centerZ = lp.z;
+      const rightX = Math.cos(yaw);
+      const rightZ = -Math.sin(yaw);
+      const safeShoulder = Math.min(
+        shoulder,
+        raycastCity(centerX, centerY, centerZ, rightX, 0, rightZ, shoulder, 0.32)
+      );
+
+      const pivotX = centerX + rightX * safeShoulder;
+      const pivotY = centerY;
+      const pivotZ = centerZ + rightZ * safeShoulder;
+
+      // Padded AABB raycast (0.48m padding keeps camera near-plane cleanly outside all walls & corners)
+      const safeDist = Math.max(
+        0.55,
+        raycastCity(pivotX, pivotY, pivotZ, backX, backY, backZ, desiredDist, 0.48)
+      );
+
+      // Snap inward IMMEDIATELY when blocked so camera NEVER clips behind walls; ease smoothly back out
+      if (safeDist < this.camDistCurrent) {
+        this.camDistCurrent = safeDist;
+      } else {
+        this.camDistCurrent += (safeDist - this.camDistCurrent) * Math.min(1, dt * 10);
+      }
+
+      const camX = pivotX + backX * this.camDistCurrent;
+      const camY = Math.max(0.55, pivotY + backY * this.camDistCurrent);
+      const camZ = pivotZ + backZ * this.camDistCurrent;
+
+      this.camera.position.set(camX + sx, camY + sy, camZ);
+      this.camera.lookAt(pivotX - backX * 16, pivotY - backY * 16, pivotZ - backZ * 16);
+    }
+
+    this.updateFPSViewmodel(game, dt);
     this.renderer.render(this.scene, this.camera);
   }
 }

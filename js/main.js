@@ -1,19 +1,23 @@
-import { CONFIG } from "./config.js";
+import { CONFIG, WEAPON_DEFS, WEAPON_LIST } from "./config.js";
 import { initDiscord } from "./discord.js";
 import { PartyNetwork } from "./network.js";
 import { SoundFX } from "./audio.js";
 import { PlaneGame } from "./game.js";
 import { PlaneRenderer3D } from "./renderer.js";
-import { WEAPONS } from "./weapons.js";
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-// Crisp SVG weapon icons for the GTA 5 radial wheel
+// Crisp SVG weapon silhouettes for the GTA 5 radial wheel
 const WEAPON_ICONS = {
-  fists: `<svg viewBox="0 0 64 64" width="44" height="44" fill="currentColor"><path d="M18 26c-3 0-5 2-5 5v12c0 7 6 13 14 13h11c8 0 14-6 14-14V25c0-3-2-5-5-5s-5 2-5 5v-4c0-3-2-5-5-5s-5 2-5 5v-2c0-3-2-5-5-5s-5 2-5 5v2c0-3-2-5-5-5s-4 2-4 5z"/></svg>`,
-  ak74: `<svg viewBox="0 0 120 44" width="76" height="30" fill="currentColor"><path d="M4 22l16-4h8v-3h26v-3h8v3h30v2h18v-3h4v7h-4v-1H92v3H76v-2H68l4 15-8 2-5-14H46l-4 11-7-1 3-10H24l-14 6-6-2z"/></svg>`
+  fists: `<svg viewBox="0 0 64 64" width="40" height="40" fill="currentColor"><path d="M18 26c-3 0-5 2-5 5v12c0 7 6 13 14 13h11c8 0 14-6 14-14V25c0-3-2-5-5-5s-5 2-5 5v-4c0-3-2-5-5-5s-5 2-5 5v-2c0-3-2-5-5-5s-5 2-5 5v2c0-3-2-5-5-5s-4 2-4 5z"/></svg>`,
+  knuckles: `<svg viewBox="0 0 76 44" width="48" height="28" fill="none" stroke="currentColor" stroke-width="4.5"><circle cx="15" cy="18" r="7"/><circle cx="30" cy="15" r="7"/><circle cx="46" cy="15" r="7"/><circle cx="61" cy="18" r="7"/><path d="M10 26c8 10 48 10 56 0" stroke-linecap="round"/></svg>`,
+  glock: `<svg viewBox="0 0 84 52" width="52" height="32" fill="currentColor"><path d="M12 12h58v12H44l-2 6h-8l-6 16H14l7-20h-9V12z"/></svg>`,
+  ak74: `<svg viewBox="0 0 120 44" width="70" height="28" fill="currentColor"><path d="M4 22l16-4h8v-3h26v-3h8v3h30v2h18v-3h4v7h-4v-1H92v3H76v-2H68l4 15-8 2-5-14H46l-4 11-7-1 3-10H24l-14 6-6-2z"/></svg>`,
+  awp: `<svg viewBox="0 0 130 40" width="76" height="26" fill="currentColor"><path d="M4 20l22-3h18v-6h26v6h56v4H72v4H62l-2 9h-8l1-9H38l-6 9H18l2-8H4v-6z"/></svg>`,
+  minigun: `<svg viewBox="0 0 120 48" width="72" height="30" fill="currentColor"><path d="M10 18h14v-6h18v4h14v-6h18v6h38v4H74v2h38v4H74v2h38v4H74v4H54v-4H36v8H20v-8H10V18z"/></svg>`,
+  rpg: `<svg viewBox="0 0 126 38" width="74" height="24" fill="currentColor"><path d="M4 13l12 3h64v-3h10l12-4 20 8-20 8-12-4H80v-3H64l-4 12h-8l3-12H44l-3 10h-7l2-10H16l-12 3V13z"/></svg>`
 };
 
 async function bootstrap() {
@@ -26,6 +30,8 @@ async function bootstrap() {
   const statRate = document.getElementById("stat-rate");
   const statRange = document.getElementById("stat-range");
   const crosshair = document.getElementById("crosshair");
+  const scopeOverlay = document.getElementById("scope-overlay");
+  const ammoHud = document.getElementById("ammo-hud");
 
   const localId = randomId();
   const color = CONFIG.COLORS[Math.floor(Math.random() * CONFIG.COLORS.length)];
@@ -38,7 +44,6 @@ async function bootstrap() {
   let network = null;
 
   if (discord.isDiscord) {
-    // Discord Activity -> Automatic Solo Mode
     game.soloMode = true;
     game.setBotsEnabled(true);
   } else {
@@ -72,14 +77,14 @@ async function bootstrap() {
 
   function buildWeaponWheel() {
     wheelRing.innerHTML = "";
-    const cx = 190;
-    const cy = 190;
-    const rOuter = 175;
-    const rInner = 78;
+    const cx = 195;
+    const cy = 195;
+    const rOuter = 182;
+    const rInner = 82;
 
     const svgNS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("viewBox", "0 0 380 380");
+    svg.setAttribute("viewBox", "0 0 390 390");
     svg.setAttribute("class", "wheel-svg");
 
     for (let i = 0; i < NUM_SLOTS; i++) {
@@ -112,10 +117,9 @@ async function bootstrap() {
       path.dataset.slot = String(i);
       svg.appendChild(path);
 
-      // Icon container positioned at wedge midpoint
       const midA = ((startDeg + endDeg) / 2) * (Math.PI / 180);
       const rMid = (rOuter + rInner) / 2;
-      const weapon = WEAPONS.find((w) => w.slot === i) || null;
+      const weapon = WEAPON_LIST.find((w) => w.slot === i) || null;
 
       const labelDiv = document.createElement("div");
       labelDiv.className = "wheel-slot-icon" + (weapon ? "" : " empty");
@@ -149,16 +153,11 @@ async function bootstrap() {
     const w = slotEls[slotIdx]?.weapon || null;
     if (w) {
       wheelName.textContent = w.name;
-      if (w.id === "ak74") {
-        wheelAmmo.textContent = game.localPlayer.reloadingTimer > 0
-          ? "Перезарядка..."
-          : `${game.localPlayer.ammo} / ∞`;
-      } else {
-        wheelAmmo.textContent = "Ближний бой";
-      }
-      statDmg.style.width = `${w.damage}%`;
-      statRate.style.width = `${w.fireRate}%`;
-      statRange.style.width = `${w.range}%`;
+      const st = game.getAmmoState(w.id);
+      wheelAmmo.textContent = st ? `${st.mag} / ${st.reserve}` : "Ближний бой";
+      statDmg.style.width = `${w.statDmg}%`;
+      statRate.style.width = `${w.statRate}%`;
+      statRange.style.width = `${w.statRange}%`;
     } else {
       wheelName.textContent = "Пусто";
       wheelAmmo.textContent = "—";
@@ -172,9 +171,10 @@ async function bootstrap() {
     if (game.wheelOpen) return;
     game.wheelOpen = true;
     game.mouseDown = false;
+    game.scoped = false;
     wheelEl.classList.remove("hidden");
     crosshair.classList.add("hidden");
-    const curWeapon = WEAPONS.find((w) => w.id === game.localPlayer.weapon);
+    const curWeapon = WEAPON_DEFS[game.localPlayer.weapon];
     selectWheelSlot(curWeapon ? curWeapon.slot : 0);
     if (document.pointerLockElement && document.exitPointerLock) {
       try { document.exitPointerLock(); } catch {}
@@ -188,9 +188,7 @@ async function bootstrap() {
     crosshair.classList.remove("hidden");
     if (applySelection) {
       const w = slotEls[hoveredSlot]?.weapon;
-      if (w) {
-        game.equipWeapon(w.id);
-      }
+      if (w) game.equipWeapon(w.id);
     }
     if (canvas.requestPointerLock) {
       try { canvas.requestPointerLock(); } catch {}
@@ -199,7 +197,6 @@ async function bootstrap() {
 
   buildWeaponWheel();
 
-  // Select wedge by mouse angle relative to screen center while wheel is open
   wheelEl.addEventListener("mousemove", (e) => {
     if (!game.wheelOpen) return;
     const rect = wheelRing.getBoundingClientRect();
@@ -209,9 +206,7 @@ async function bootstrap() {
     let deg = (Math.atan2(dy, dx) * 180) / Math.PI + 90 + 22.5;
     deg = ((deg % 360) + 360) % 360;
     const idx = Math.floor(deg / 45) % NUM_SLOTS;
-    if (idx !== hoveredSlot) {
-      selectWheelSlot(idx);
-    }
+    if (idx !== hoveredSlot) selectWheelSlot(idx);
   });
 
   // ==================== Controls ====================
@@ -223,11 +218,12 @@ async function bootstrap() {
   window.addEventListener("keydown", (e) => {
     sound.unlock();
     if (e.code === "KeyB" && !e.repeat) {
-      if (game.wheelOpen) {
-        closeWeaponWheel(true);
-      } else {
-        openWeaponWheel();
-      }
+      if (game.wheelOpen) closeWeaponWheel(true);
+      else openWeaponWheel();
+      return;
+    }
+    if (e.code === "KeyV" && !e.repeat && !game.wheelOpen) {
+      game.toggleViewMode();
       return;
     }
     if (e.code === "Escape" && game.wheelOpen) {
@@ -264,9 +260,14 @@ async function bootstrap() {
       game.mouseDown = true;
       game.triggerPrimaryAction();
     } else if (e.button === 2) {
-      rmbDragging = true;
-      lastX = e.clientX;
-      lastY = e.clientY;
+      const def = WEAPON_DEFS[game.localPlayer.weapon];
+      if (def && def.canScope && game.localPlayer.reloadingTimer <= 0) {
+        game.scoped = !game.scoped;
+      } else {
+        rmbDragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+      }
     }
   });
 
@@ -277,17 +278,17 @@ async function bootstrap() {
 
   window.addEventListener("mousemove", (e) => {
     if (game.wheelOpen) return;
-    const sens = 0.0022;
+    const sens = game.scoped ? 0.0007 : 0.0022;
     if (document.pointerLockElement === canvas) {
       game.camYaw -= e.movementX * sens;
-      game.camPitch = Math.max(-0.25, Math.min(0.95, game.camPitch + e.movementY * sens));
+      game.camPitch = Math.max(-1.15, Math.min(1.15, game.camPitch + e.movementY * sens));
     } else if (rmbDragging) {
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
       lastX = e.clientX;
       lastY = e.clientY;
       game.camYaw -= dx * sens * 1.4;
-      game.camPitch = Math.max(-0.25, Math.min(0.95, game.camPitch + dy * sens * 1.4));
+      game.camPitch = Math.max(-1.15, Math.min(1.15, game.camPitch + dy * sens * 1.4));
     }
   });
 
@@ -296,6 +297,27 @@ async function bootstrap() {
     renderer.adjustZoom(e.deltaY > 0 ? 0.1 : -0.1);
   }, { passive: false });
 
+  function updateAmmoHud() {
+    const lp = game.localPlayer;
+    const st = game.getAmmoState(lp.weapon);
+    if (!st) {
+      ammoHud.classList.add("hidden");
+    } else {
+      ammoHud.classList.remove("hidden");
+      ammoHud.textContent = lp.reloadingTimer > 0
+        ? `.../${st.reserve}`
+        : `${st.mag}/${st.reserve}`;
+    }
+
+    if (game.scoped) {
+      scopeOverlay.classList.remove("hidden");
+      crosshair.classList.add("hidden");
+    } else {
+      scopeOverlay.classList.add("hidden");
+      if (!game.wheelOpen) crosshair.classList.remove("hidden");
+    }
+  }
+
   let lastTime = performance.now();
   function loop(now) {
     const dt = Math.min(0.05, (now - lastTime) / 1000);
@@ -303,6 +325,7 @@ async function bootstrap() {
 
     game.update(dt);
     renderer.render(game, dt, sound);
+    updateAmmoHud();
     requestAnimationFrame(loop);
   }
 
