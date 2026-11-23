@@ -3,13 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Rubikon — 3D P2P Party</title>
+  <title>Rubikon — 3D Arena</title>
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div id="app">
     <canvas id="game-canvas"></canvas>
     <canvas id="overlay-canvas"></canvas>
+
+    <div class="crosshair" id="crosshair"></div>
+
+    <div class="death-overlay hidden" id="death-overlay">
+      <div class="death-card">
+        <div class="death-title">ВЫ ПОВЕРЖЕНЫ</div>
+        <div class="death-sub">Возрождение через <span id="respawn-timer">3.0</span> с</div>
+      </div>
+    </div>
 
     <header class="hud-top">
       <div class="brand-card">
@@ -22,13 +31,14 @@
       </div>
 
       <div class="hud-actions">
+        <span class="kills-badge" id="kills-text" title="Победы">⚔ 0</span>
         <button class="hud-btn" id="btn-copy-link" type="button" title="Скопировать ссылку на комнату">
           <span>🔗 Ссылка</span>
         </button>
         <button class="hud-btn" id="btn-room" type="button" title="Комната и настройки">
           <span id="room-label">Комната</span>
         </button>
-        <button class="hud-btn" id="btn-bots" type="button" title="Добавить ботов для теста">
+        <button class="hud-btn" id="btn-bots" type="button" title="Включить или убрать ботов">
           <span>+ Боты</span>
         </button>
         <button class="hud-btn icon-btn" id="btn-sound" type="button" title="Звук">
@@ -39,13 +49,20 @@
 
     <aside class="party-panel" id="party-panel">
       <div class="party-header">
-        <span>Партия</span>
+        <span>Бойцы</span>
         <span class="party-count" id="party-count">1</span>
       </div>
       <ul class="party-list" id="party-list"></ul>
     </aside>
 
     <div class="hud-bottom">
+      <div class="hp-bar-wrap">
+        <div class="hp-bar-bg">
+          <div class="hp-bar-fill" id="hp-fill" style="width: 100%"></div>
+        </div>
+        <span class="hp-bar-text" id="hp-text">100 / 100</span>
+      </div>
+
       <div class="emote-bar">
         <button class="emote-btn" data-emote="👋" type="button">👋</button>
         <button class="emote-btn" data-emote="🔥" type="button">🔥</button>
@@ -53,10 +70,12 @@
         <button class="emote-btn" data-emote="⭐" type="button">⭐</button>
       </div>
       <div class="controls-hint">
-        <span>WASD / Стрелки — идти</span>
+        <span>WASD — идти</span>
+        <span>Мышь — обзор</span>
+        <span>ЛКМ — удар</span>
+        <span>Пробел — прыжок</span>
         <span>Shift — рывок</span>
-        <span>Колесо — зум</span>
-        <span>1–4 — эмоции</span>
+        <span>Esc — курсор</span>
       </div>
     </div>
 
@@ -98,8 +117,57 @@
     <div class="toast hidden" id="toast"></div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" onerror="this.onerror=null;this.src='https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js'"></script>
-  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js" onerror="this.onerror=null;this.src='https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js'"></script>
-  <script type="module" src="js/main.js"></script>
+  <script>
+    (function () {
+      function loadScript(urls) {
+        return new Promise(function (resolve, reject) {
+          var idx = 0;
+          function next() {
+            if (idx >= urls.length) {
+              reject(new Error("Failed to load script"));
+              return;
+            }
+            var s = document.createElement("script");
+            s.src = urls[idx++];
+            s.onload = resolve;
+            s.onerror = next;
+            document.head.appendChild(s);
+          }
+          next();
+        });
+      }
+
+      var params = new URLSearchParams(window.location.search);
+      var inDiscord =
+        (params.has("frame_id") && params.has("instance_id")) ||
+        window.location.hostname.endsWith(".discordsays.com");
+
+      var tasks = inDiscord
+        ? [
+            loadScript([
+              "vendor/three.min.js",
+              "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+              "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"
+            ])
+          ]
+        : [
+            loadScript([
+              "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+              "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"
+            ]),
+            loadScript([
+              "https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js",
+              "https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"
+            ]).catch(function () {})
+          ];
+
+      Promise.all(tasks).then(function () {
+        var m = document.createElement("script");
+        m.type = "module";
+        m.src = "js/main.js";
+        document.body.appendChild(m);
+      });
+    })();
+  </script>
 </body>
 </html>

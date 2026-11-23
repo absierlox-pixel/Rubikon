@@ -103,6 +103,11 @@ async function bootstrap() {
   const toastEl = document.getElementById("toast");
   const joystickZone = document.getElementById("joystick-zone");
   const joystickKnob = document.getElementById("joystick-knob");
+  const hpFill = document.getElementById("hp-fill");
+  const hpText = document.getElementById("hp-text");
+  const killsText = document.getElementById("kills-text");
+  const deathOverlay = document.getElementById("death-overlay");
+  const respawnTimerEl = document.getElementById("respawn-timer");
 
   const localId = randomId();
   const profile = loadSavedProfile();
@@ -124,7 +129,7 @@ async function bootstrap() {
     partyList.innerHTML = "";
     for (const p of game.players.values()) {
       const li = document.createElement("li");
-      li.className = "party-item";
+      li.className = "party-item" + (p.alive === false ? " dead" : "");
 
       const swatch = document.createElement("span");
       swatch.className = "party-swatch";
@@ -136,8 +141,10 @@ async function bootstrap() {
 
       const tag = document.createElement("span");
       tag.className = "party-tag";
-      if (p.id === localId) {
-        tag.textContent = p.isHost ? "вы · хост" : "вы";
+      if (p.alive === false) {
+        tag.textContent = "💀";
+      } else if (p.id === localId) {
+        tag.textContent = game.soloMode ? "вы" : (p.isHost ? "вы · хост" : "вы");
       } else if (p.isBot) {
         tag.textContent = "бот";
       } else if (p.isHost) {
@@ -165,51 +172,81 @@ async function bootstrap() {
   }
 
   const discord = await initDiscord();
-  if (!discord.isDiscord && !window.location.hash) {
-    window.history.replaceState(null, "", `#${discord.roomId}`);
-  }
-  roomLabel.textContent = discord.isDiscord ? "Rubikon Discord" : `Комната: ${discord.roomId.slice(0, 10)}`;
+  let network = null;
 
-  const network = new PartyNetwork({
-    localId,
-    roomId: discord.roomId,
-    serverUrl: profile.serverUrl || CONFIG.DEFAULT_WS_URL,
-    getLocalPlayer: () => game.localPlayer,
-    onState: (player) => {
-      game.upsertRemotePlayer(player);
-    },
-    onPeerJoin: () => {
-      sound.playJoin();
-      renderPartyList();
-    },
-    onPeerLeave: (id) => {
-      game.removePlayer(id);
-      renderPartyList();
-    },
-    onStatus: (state, label) => {
-      statusDot.className = "status-dot" + (state === "online" ? " online" : state === "error" ? " error" : "");
-      statusText.textContent = label;
-      game.setHostFlag(network.isHost);
-      roleBadge.textContent = network.isHost ? "HOST" : network.mode === "p2p" ? "P2P" : "WS";
-      renderPartyList();
+  if (discord.isDiscord) {
+    // Discord Activity -> Automatic Solo Mode with AI opponents (zero server needed)
+    game.soloMode = true;
+    statusDot.className = "status-dot online";
+    statusText.textContent = "Одиночка (Discord)";
+    roleBadge.textContent = "SOLO";
+    roomLabel.textContent = "Одиночка";
+    if (btnCopyLink) btnCopyLink.style.display = "none";
+
+    game.setBotsEnabled(true);
+    btnBots.classList.add("active");
+  } else {
+    if (!window.location.hash) {
+      window.history.replaceState(null, "", `#${discord.roomId}`);
     }
-  });
+    roomLabel.textContent = `Комната: ${discord.roomId.slice(0, 10)}`;
 
-  network.start();
+    network = new PartyNetwork({
+      localId,
+      roomId: discord.roomId,
+      serverUrl: profile.serverUrl || CONFIG.DEFAULT_WS_URL,
+      getLocalPlayer: () => game.localPlayer,
+      onState: (player) => {
+        game.upsertRemotePlayer(player);
+      },
+      onHit: (hitData) => {
+        game.receiveNetworkHit(hitData);
+      },
+      onPeerJoin: () => {
+        sound.playJoin();
+        renderPartyList();
+      },
+      onPeerLeave: (id) => {
+        game.removePlayer(id);
+        renderPartyList();
+      },
+      onStatus: (state, label) => {
+        statusDot.className = "status-dot" + (state === "online" ? " online" : state === "error" ? " error" : "");
+        statusText.textContent = label;
+        game.setHostFlag(network.isHost);
+        roleBadge.textContent = network.isHost ? "HOST" : network.mode === "p2p" ? "P2P" : "WS";
+        renderPartyList();
+      }
+    });
+
+    game.onNetworkHit = (hitData) => {
+      if (network) network.sendHit(hitData);
+    };
+
+    network.start();
+  }
+
   renderPartyList();
   renderColorPicker();
 
   window.addEventListener("resize", () => renderer.resize());
-  window.addEventListener("beforeunload", () => network.sendLeave());
+  window.addEventListener("beforeunload", () => {
+    if (network) network.sendLeave();
+  });
 
+  // Keyboard controls (WASD, Space jump, Shift dash/sprint, 1-4 emotes)
   window.addEventListener("keydown", (e) => {
     if (document.activeElement && document.activeElement.tagName === "INPUT") {
       return;
     }
     sound.unlock();
     game.keys.add(e.code);
-    if (e.code === "ShiftLeft" || e.code === "ShiftRight" || e.code === "Space") {
-      if (game.triggerDash()) {
+    if (e.code === "Space") {
+      e.preventDefault();
+      game.triggerJump();
+    }
+    if (e.code === "ShiftLeft" || e.code === "ShiftRight") {
+      if (!e.repeat && game.triggerDash()) {
         sound.playDash();
       }
     }
@@ -223,12 +260,54 @@ async function bootstrap() {
     game.keys.delete(e.code);
   });
 
-  canvas.addEventListener("pointerdown", (e) => {
+  // Mouse camera orbit (Pointer Lock + Right-drag fallback) & LMB Melee Attack
+  let rmbDragging = false;
+  let lastMouseX = 0;
+  let lastMouseY = 0;
+
+  canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (!roomModal.classList.contains("hidden")) {
+      return;
+    }
     sound.unlock();
-    const rect = canvas.getBoundingClientRect();
-    const hit = renderer.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
-    if (hit) {
-      game.clickTarget = hit;
+    if (e.button === 0) {
+      // LMB: lock pointer for smooth mouse look AND attack right away
+      if (document.pointerLockElement !== canvas && canvas.requestPointerLock) {
+        try {
+          canvas.requestPointerLock();
+        } catch {}
+      }
+      game.triggerAttack();
+    } else if (e.button === 2) {
+      rmbDragging = true;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+    }
+  });
+
+  window.addEventListener("mouseup", (e) => {
+    if (e.button === 2) {
+      rmbDragging = false;
+    }
+  });
+
+  window.addEventListener("mousemove", (e) => {
+    if (!roomModal.classList.contains("hidden")) {
+      return;
+    }
+    const sens = 0.0028;
+    if (document.pointerLockElement === canvas) {
+      game.camYaw -= e.movementX * sens;
+      game.camPitch = Math.max(-0.22, Math.min(1.05, game.camPitch + e.movementY * sens));
+    } else if (rmbDragging) {
+      const dx = e.clientX - lastMouseX;
+      const dy = e.clientY - lastMouseY;
+      lastMouseX = e.clientX;
+      lastMouseY = e.clientY;
+      game.camYaw -= dx * sens * 1.4;
+      game.camPitch = Math.max(-0.22, Math.min(1.05, game.camPitch + dy * sens * 1.4));
     }
   });
 
@@ -247,7 +326,8 @@ async function bootstrap() {
 
   if (btnCopyLink) {
     btnCopyLink.addEventListener("click", async () => {
-      const inviteUrl = buildRoomInviteUrl(network.roomId);
+      const roomId = network ? network.roomId : discord.roomId;
+      const inviteUrl = buildRoomInviteUrl(roomId);
       const ok = await copyText(inviteUrl);
       showToast(ok ? "Ссылка на комнату скопирована!" : inviteUrl);
     });
@@ -268,9 +348,12 @@ async function bootstrap() {
   });
 
   btnRoom.addEventListener("click", () => {
+    if (document.pointerLockElement && document.exitPointerLock) {
+      try { document.exitPointerLock(); } catch {}
+    }
     inputName.value = game.localPlayer.name;
-    inputServer.value = network.serverUrl;
-    inputRoom.value = network.roomId;
+    inputServer.value = network ? network.serverUrl : "";
+    inputRoom.value = network ? network.roomId : discord.roomId;
     selectedColor = game.localPlayer.color;
     renderColorPicker();
     roomModal.classList.remove("hidden");
@@ -281,7 +364,7 @@ async function bootstrap() {
   });
 
   btnCopyRoom.addEventListener("click", async () => {
-    const val = inputRoom.value.trim() || network.roomId;
+    const val = inputRoom.value.trim() || (network ? network.roomId : discord.roomId);
     const inviteUrl = buildRoomInviteUrl(val);
     const ok = await copyText(inviteUrl);
     showToast(ok ? "Ссылка на комнату скопирована!" : inviteUrl);
@@ -290,21 +373,20 @@ async function bootstrap() {
   btnApplyRoom.addEventListener("click", () => {
     const nextName = inputName.value.trim() || game.localPlayer.name;
     const nextServer = inputServer.value.trim();
-    const nextRoom = inputRoom.value.trim() || network.roomId;
+    const nextRoom = inputRoom.value.trim() || (network ? network.roomId : discord.roomId);
     game.setLocalProfile(nextName, selectedColor);
     saveProfile(nextName, selectedColor, nextServer);
-    if (nextRoom !== network.roomId || nextServer !== network.serverUrl) {
+    if (network && (nextRoom !== network.roomId || nextServer !== network.serverUrl)) {
       network.setRoom(nextRoom, nextServer);
-      if (!discord.isDiscord) {
-        window.location.hash = network.roomId;
-        roomLabel.textContent = `Комната: ${network.roomId.slice(0, 10)}`;
-      }
+      window.location.hash = network.roomId;
+      roomLabel.textContent = `Комната: ${network.roomId.slice(0, 10)}`;
     }
     renderPartyList();
     roomModal.classList.add("hidden");
     showToast("Сохранено");
   });
 
+  // Mobile joystick
   let joyActive = false;
   joystickZone.addEventListener("pointerdown", (e) => {
     sound.unlock();
@@ -313,9 +395,7 @@ async function bootstrap() {
   });
 
   joystickZone.addEventListener("pointermove", (e) => {
-    if (!joyActive) {
-      return;
-    }
+    if (!joyActive) return;
     const rect = joystickZone.getBoundingClientRect();
     const cx = rect.left + rect.width / 2;
     const cy = rect.top + rect.height / 2;
@@ -343,18 +423,41 @@ async function bootstrap() {
   joystickZone.addEventListener("pointercancel", resetJoy);
 
   let lastTime = performance.now();
-  let partySyncCounter = 0;
+  let uiSyncCounter = 0;
+
+  function updateCombatHud() {
+    const lp = game.localPlayer;
+    const pct = Math.max(0, Math.min(100, Math.round((lp.hp / lp.maxHp) * 100)));
+    if (hpFill) {
+      hpFill.style.width = `${pct}%`;
+      hpFill.style.background = pct > 50 ? "#23a55a" : pct > 25 ? "#f0b232" : "#f23f43";
+    }
+    if (hpText) hpText.textContent = `${Math.ceil(lp.hp)} / ${lp.maxHp}`;
+    if (killsText) killsText.textContent = `⚔ ${game.kills}`;
+
+    if (deathOverlay) {
+      if (!lp.alive) {
+        deathOverlay.classList.remove("hidden");
+        if (respawnTimerEl) {
+          respawnTimerEl.textContent = Math.max(0, lp.respawnTimer).toFixed(1);
+        }
+      } else {
+        deathOverlay.classList.add("hidden");
+      }
+    }
+  }
 
   function loop(now) {
     const dt = Math.min(0.05, (now - lastTime) / 1000);
     lastTime = now;
 
     game.update(dt);
-    renderer.render(game);
+    renderer.render(game, dt, sound);
+    updateCombatHud();
 
-    partySyncCounter += dt;
-    if (partySyncCounter > 0.6) {
-      partySyncCounter = 0;
+    uiSyncCounter += dt;
+    if (uiSyncCounter > 0.45) {
+      uiSyncCounter = 0;
       renderPartyList();
     }
 
@@ -364,4 +467,8 @@ async function bootstrap() {
   requestAnimationFrame(loop);
 }
 
-window.addEventListener("load", bootstrap);
+if (document.readyState === "complete") {
+  bootstrap();
+} else {
+  window.addEventListener("load", bootstrap);
+}

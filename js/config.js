@@ -3,15 +3,34 @@ export const CONFIG = {
   SITE_URL: "https://absierlox-pixel.github.io/Rubikon/",
   DISCORD_CLIENT_ID: "1574065476131233812",
   DEFAULT_WS_URL: "",
-  WORLD_SIZE: 220,
-  GRID_DIVISIONS: 44,
-  PLAYER_RADIUS: 1.1,
-  MOVE_SPEED: 22,
-  DASH_MULTIPLIER: 2.2,
-  DASH_DURATION: 0.18,
-  DASH_COOLDOWN: 1.0,
+  WORLD_SIZE: 120,
+  GRID_DIVISIONS: 30,
+  PLAYER_RADIUS: 0.75,
+  MOVE_SPEED: 11.5,
+  SPRINT_MULTIPLIER: 1.55,
+  DASH_MULTIPLIER: 2.35,
+  DASH_DURATION: 0.2,
+  DASH_COOLDOWN: 1.1,
+  JUMP_VELOCITY: 10.5,
+  GRAVITY: 28,
+  MAX_HP: 100,
+  ATTACK_RANGE: 3.1,
+  ATTACK_ARC_COS: 0.25,
+  ATTACK_COOLDOWN: 0.36,
+  ATTACK_DAMAGE: [22, 26, 38],
+  RESPAWN_TIME: 3.2,
   SYNC_INTERVAL_MS: 50,
   EMOTE_DURATION_MS: 2200,
+  PILLARS: [
+    { x: -16, z: -16, r: 2.1, h: 7.5 },
+    { x: 16, z: -16, r: 2.1, h: 7.5 },
+    { x: 16, z: 16, r: 2.1, h: 7.5 },
+    { x: -16, z: 16, r: 2.1, h: 7.5 },
+    { x: 0, z: -32, r: 2.6, h: 9.0 },
+    { x: 0, z: 32, r: 2.6, h: 9.0 },
+    { x: -32, z: 0, r: 2.6, h: 9.0 },
+    { x: 32, z: 0, r: 2.6, h: 9.0 }
+  ],
   COLORS: [
     "#5865f2",
     "#23a55a",
@@ -22,5 +41,5 @@ export const CONFIG = {
     "#9b59b6",
     "#1abc9c"
   ],
-  BOT_NAMES: ["Wumpus", "Clyde", "Nelly", "Cap"]
+  BOT_NAMES: ["Wumpus", "Clyde", "Nelly", "Cap", "Rex"]
 };

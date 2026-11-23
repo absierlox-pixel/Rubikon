@@ -27,6 +27,7 @@ export class PartyNetwork {
     this.onStatus = options.onStatus;
     this.onPeerJoin = options.onPeerJoin;
     this.onPeerLeave = options.onPeerLeave;
+    this.onHit = options.onHit || (() => {});
     this.getLocalPlayer = options.getLocalPlayer;
 
     this.mode = this.serverUrl ? "ws" : "p2p";
@@ -125,9 +126,35 @@ export class PartyNetwork {
           this.handleRemotePlayer(msg.player);
         } else if (msg.type === "leave" && msg.id) {
           this.removeRemotePlayer(msg.id);
+        } else if (msg.type === "hit" && msg.hit) {
+          this.onHit(msg.hit);
         }
       };
     } catch {}
+  }
+
+  sendHit(hitData) {
+    if (this.channel) {
+      try {
+        this.channel.postMessage({ type: "hit", sender: this.localId, hit: hitData });
+      } catch {}
+    }
+    if (this.mode === "p2p") {
+      const payload = { type: "hit", hit: hitData };
+      if (this.isHost) {
+        this.broadcastToGuests(payload);
+      } else if (this.hostConn && this.hostConn.open) {
+        try {
+          this.hostConn.send(payload);
+        } catch {}
+      }
+      return;
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: "hit", roomId: this.roomId, hit: hitData }));
+      } catch {}
+    }
   }
 
   // ==================== WebRTC P2P (Auto-Host) ====================
@@ -173,7 +200,6 @@ export class PartyNetwork {
         return;
       }
       if (err && err.type === "unavailable-id") {
-        // Host already exists for this room -> join as guest
         this.cleanupP2P();
         this.connectAsGuest(hostPeerId);
         return;
@@ -218,6 +244,12 @@ export class PartyNetwork {
       } else if (data.type === "leave" && data.id) {
         this.removeRemotePlayer(data.id);
         this.broadcastToGuests({ type: "leave", id: data.id }, conn.peer);
+      } else if (data.type === "hit" && data.hit) {
+        if (data.hit.targetId === this.localId) {
+          this.onHit(data.hit);
+        } else {
+          this.broadcastToGuests({ type: "hit", hit: data.hit }, conn.peer);
+        }
       }
     });
 
@@ -300,6 +332,8 @@ export class PartyNetwork {
           }
         } else if (data.type === "leave" && data.id) {
           this.removeRemotePlayer(data.id);
+        } else if (data.type === "hit" && data.hit) {
+          this.onHit(data.hit);
         }
       });
 
@@ -325,7 +359,6 @@ export class PartyNetwork {
         return;
       }
       if (err && err.type === "peer-unavailable") {
-        // Host disappeared before we connected -> try claiming host
         this.onStatus("connecting", "Переход в режим хоста...");
         this.scheduleP2PReconnect(500 + Math.random() * 800);
         return;
@@ -427,6 +460,8 @@ export class PartyNetwork {
           }
         } else if (data.type === "leave" && data.id) {
           this.removeRemotePlayer(data.id);
+        } else if (data.type === "hit" && data.hit) {
+          this.onHit(data.hit);
         }
       };
 
