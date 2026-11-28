@@ -19,7 +19,7 @@ export const VEHICLE_TYPES = {
     wheelRadius: 0.34,
     wheelWidth: 0.25,
     mass: 1350,
-    maxHp: 180,
+    maxHp: 480,
     accel: 24.0,
     reverseAccel: 13.0,
     maxSpeed: 34.0,
@@ -41,7 +41,7 @@ export const VEHICLE_TYPES = {
     wheelRadius: 0.36,
     wheelWidth: 0.27,
     mass: 1620,
-    maxHp: 220,
+    maxHp: 560,
     accel: 22.5,
     reverseAccel: 12.0,
     maxSpeed: 31.5,
@@ -64,7 +64,7 @@ export const VEHICLE_TYPES = {
     wheelRadius: 0.34,
     wheelWidth: 0.23,
     mass: 1580,
-    maxHp: 230,
+    maxHp: 600,
     accel: 18.5,
     reverseAccel: 11.0,
     maxSpeed: 27.5,
@@ -86,7 +86,7 @@ export const VEHICLE_TYPES = {
     wheelRadius: 0.43,
     wheelWidth: 0.29,
     mass: 2350,
-    maxHp: 310,
+    maxHp: 820,
     accel: 16.5,
     reverseAccel: 10.5,
     maxSpeed: 24.5,
@@ -203,7 +203,7 @@ export function applyZoneDamage(v, localX, localZ, amount, game, hitWorldPos = n
 
   const prevHp = v.hp;
   v.hp = Math.max(0, v.hp - amount);
-  const dmgNorm = clamp(amount / def.maxHp, 0, 0.55);
+  const dmgNorm = clamp(amount / (def.maxHp * 0.38), 0, 0.8);
 
   if (Math.abs(normZ) >= Math.abs(normX) * 0.85) {
     if (normZ >= 0) {
@@ -342,14 +342,20 @@ export function updateVehicles(vehicles, players, game, dt) {
     v.reversing = false;
     v.handbrake = false;
 
-    if (driver && !v.exploded && !game.wheelOpen) {
+    if (driver && !v.exploded && (driver.isBot || !game.wheelOpen)) {
       let throttle = 0;
       let steerIn = 0;
-      if (game.keys.has("KeyW") || game.keys.has("ArrowUp")) throttle += 1;
-      if (game.keys.has("KeyS") || game.keys.has("ArrowDown")) throttle -= 1;
-      if (game.keys.has("KeyA") || game.keys.has("ArrowLeft")) steerIn += 1;
-      if (game.keys.has("KeyD") || game.keys.has("ArrowRight")) steerIn -= 1;
-      v.handbrake = game.keys.has("Space");
+      if (driver.isBot && driver.driveInput) {
+        throttle = driver.driveInput.throttle || 0;
+        steerIn = driver.driveInput.steer || 0;
+        v.handbrake = Boolean(driver.driveInput.handbrake);
+      } else if (!driver.isBot) {
+        if (game.keys.has("KeyW") || game.keys.has("ArrowUp")) throttle += 1;
+        if (game.keys.has("KeyS") || game.keys.has("ArrowDown")) throttle -= 1;
+        if (game.keys.has("KeyA") || game.keys.has("ArrowLeft")) steerIn += 1;
+        if (game.keys.has("KeyD") || game.keys.has("ArrowRight")) steerIn -= 1;
+        v.handbrake = game.keys.has("Space");
+      }
 
       // Smooth steering angle (speed-sensitive)
       const speedFactor = clamp(1 - Math.abs(fwdSpeed) / (def.maxSpeed * 1.45), 0.36, 1.0);
@@ -492,8 +498,8 @@ export function updateVehicles(vehicles, players, game, dt) {
           const lever = hitCorner.lx * nz - hitCorner.lz * nx;
           v.angVel += clamp(lever * impactSpeed * 0.06, -3.5, 3.5);
 
-          if (impactSpeed > 4.0) {
-            const dmg = (impactSpeed - 3.2) * 3.8;
+          if (impactSpeed > 4.2) {
+            const dmg = (impactSpeed - 3.8) * 2.1;
             applyZoneDamage(v, hitCorner.lx, hitCorner.lz, dmg, game, hitCorner);
             v.pitch += (hitCorner.lz > 0 ? 0.06 : -0.06) * clamp(impactSpeed / 18, 0.2, 1.2);
             game.pushEvent({
@@ -524,12 +530,12 @@ export function updateVehicles(vehicles, players, game, dt) {
       }
     }
 
-    // Keep driver synced with driver seat position
+    // Keep driver synced with Left-Hand Drive (LHD) driver seat position
     if (driver && driver.alive) {
-      const seatLx = -0.40;
-      const seatLz = 0.15;
+      const seatLx = 0.40;
+      const seatLz = 0.12;
       driver.x = v.x + seatLx * cosA + seatLz * sinA;
-      driver.y = v.y + 0.22;
+      driver.y = v.y + 0.02;
       driver.z = v.z - seatLx * sinA + seatLz * cosA;
       driver.angle = v.angle;
       driver.aimYaw = v.angle;
@@ -670,29 +676,29 @@ function applyMeshCrumple(entry, amount) {
   const pos = entry.geo.attributes.position;
   const base = entry.basePos;
   const z = entry.zone;
-  const amp = amount * 0.24;
+  const amp = amount * 0.44;
   for (let i = 0; i < pos.count; i++) {
     const bx = base[i * 3];
     const by = base[i * 3 + 1];
     const bz = base[i * 3 + 2];
     // Deterministic crumple wave per vertex
-    const wave = Math.sin(bx * 11.3 + by * 17.7 + bz * 13.1);
-    const wave2 = Math.cos(bx * 23.1 - bz * 19.4);
+    const wave = Math.sin(bx * 10.7 + by * 16.3 + bz * 12.1);
+    const wave2 = Math.cos(bx * 21.3 - bz * 18.7);
     let dx = 0, dy = 0, dz = 0;
     if (z === "front") {
-      dz = -Math.abs(wave) * amp - amp * 0.25;
-      dy = wave2 * amp * 0.45;
-      dx = wave * amp * 0.25;
+      dz = -Math.abs(wave) * amp - amp * 0.35;
+      dy = wave2 * amp * 0.55;
+      dx = wave * amp * 0.32;
     } else if (z === "rear") {
-      dz = Math.abs(wave) * amp + amp * 0.25;
-      dy = wave2 * amp * 0.4;
-      dx = wave * amp * 0.25;
+      dz = Math.abs(wave) * amp + amp * 0.35;
+      dy = wave2 * amp * 0.5;
+      dx = wave * amp * 0.32;
     } else if (z === "left") {
-      dx = Math.abs(wave) * amp + amp * 0.22;
-      dy = wave2 * amp * 0.35;
+      dx = -Math.abs(wave) * amp - amp * 0.30;
+      dy = wave2 * amp * 0.42;
     } else if (z === "right") {
-      dx = -Math.abs(wave) * amp - amp * 0.22;
-      dy = wave2 * amp * 0.35;
+      dx = Math.abs(wave) * amp + amp * 0.30;
+      dy = wave2 * amp * 0.42;
     }
     pos.setXYZ(i, bx + dx, by + dy, bz + dz);
   }
@@ -767,15 +773,15 @@ export function createVehicleMesh(v) {
   underbody.position.y = baseH - 0.06;
   bodyTilt.add(underbody);
 
-  // Left & Right side body panels (deformable)
+  // Left (+X) & Right (-X) side body panels (deformable)
   const sideW = 0.24;
   const sideL = L * 0.58;
-  const sideLMesh = makeDeformableBox(sideW, bodyH, sideL, 2, 2, 4, paintMat, "left", deformables);
-  sideLMesh.position.set(-W * 0.5 + sideW * 0.5, baseH + bodyH * 0.5, 0);
+  const sideLMesh = makeDeformableBox(sideW, bodyH, sideL, 2, 3, 5, paintMat, "left", deformables);
+  sideLMesh.position.set(W * 0.5 - sideW * 0.5, baseH + bodyH * 0.5, 0);
   bodyTilt.add(sideLMesh);
 
-  const sideRMesh = makeDeformableBox(sideW, bodyH, sideL, 2, 2, 4, paintMat, "right", deformables);
-  sideRMesh.position.set(W * 0.5 - sideW * 0.5, baseH + bodyH * 0.5, 0);
+  const sideRMesh = makeDeformableBox(sideW, bodyH, sideL, 2, 3, 5, paintMat, "right", deformables);
+  sideRMesh.position.set(-W * 0.5 + sideW * 0.5, baseH + bodyH * 0.5, 0);
   bodyTilt.add(sideRMesh);
 
   // Side skirts & mirrors
@@ -813,7 +819,7 @@ export function createVehicleMesh(v) {
   bodyTilt.add(dash);
 
   const steerPivot = new THREE.Group();
-  steerPivot.position.set(-0.40, baseH + bodyH * 0.88, L * 0.08);
+  steerPivot.position.set(0.40, baseH + bodyH * 0.88, L * 0.08);
   steerPivot.rotation.x = -0.45;
   const steerRing = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.024, 8, 16), sm.darkTrim);
   steerPivot.add(steerRing);
@@ -904,8 +910,8 @@ export function createVehicleMesh(v) {
     bodyTilt.add(wing);
   }
 
-  // Roof & Pillars & Glass
-  const roofH = isSuv ? 0.56 : 0.44;
+  // Roof & Pillars & Glass (generous headroom so driver's head stays inside cabin)
+  const roofH = isSuv ? 0.66 : 0.56;
   const roofY = baseH + bodyH + roofH;
   const roof = new THREE.Mesh(new THREE.BoxGeometry(W * 0.78, 0.07, L * (isSuv ? 0.58 : 0.40)), paintMat);
   roof.position.set(0, roofY, isSuv ? -0.18 : -0.06);
@@ -1011,11 +1017,15 @@ export function updateVehicleMesh(vm, v) {
     w.wheelPivot.rotation.z = wd * (i % 2 === 0 ? 0.24 : -0.24) + Math.sin(v.wheelSpin) * wd * 0.12;
   }
 
-  // Hood pop & detached parts
+  // Hood pop & detached/bent parts
   vm.hoodPivot.visible = !v.hoodDetached;
-  vm.hoodPivot.rotation.x = -v.hoodPop * 0.42 - (v.speed > 8 ? v.hoodPop * Math.sin(performance.now() * 0.025) * 0.08 : 0);
+  vm.hoodPivot.rotation.x = -v.hoodPop * 0.48 - (v.speed > 8 ? v.hoodPop * Math.sin(performance.now() * 0.025) * 0.10 : 0);
   vm.frontBumper.visible = !v.frontBumperDetached;
+  vm.frontBumper.rotation.x = v.zones.front * 0.22;
+  vm.frontBumper.rotation.z = v.zones.front * 0.12;
   vm.rearBumper.visible = !v.rearBumperDetached;
+  vm.rearBumper.rotation.x = -v.zones.rear * 0.22;
+  vm.rearBumper.rotation.z = -v.zones.rear * 0.12;
 
   // Headlights & Taillights
   vm.headlightMatL.emissiveIntensity = v.lightsBroken.fl || v.exploded ? 0 : (v.driverId ? 1.2 : 0.35);

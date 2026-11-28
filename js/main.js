@@ -36,6 +36,18 @@ async function bootstrap() {
   const speedHud = document.getElementById("speed-hud");
   const speedVal = document.getElementById("speed-val");
   const carHpFill = document.getElementById("car-hp-fill");
+  const hpText = document.getElementById("hp-text");
+  const hpFill = document.getElementById("hp-fill");
+  const copyLogsBtn = document.getElementById("copy-logs-btn");
+  const lobbyModal = document.getElementById("lobby-modal");
+  const lobbyCloseBtn = document.getElementById("lobby-close-btn");
+  const lobbyStatusEl = document.getElementById("lobby-status");
+  const lobbyRoomInput = document.getElementById("lobby-room-input");
+  const lobbyWsInput = document.getElementById("lobby-ws-input");
+  const lobbyConnectBtn = document.getElementById("lobby-connect-btn");
+  const lobbyCopyLinkBtn = document.getElementById("lobby-copy-link-btn");
+  const lobbyBotsBtn = document.getElementById("lobby-bots-btn");
+  const lobbyPlayersList = document.getElementById("lobby-players-list");
 
   const localId = randomId();
   const color = CONFIG.COLORS[Math.floor(Math.random() * CONFIG.COLORS.length)];
@@ -64,8 +76,11 @@ async function bootstrap() {
       onHit: (hitData) => game.receiveNetworkHit(hitData),
       onPeerJoin: () => {},
       onPeerLeave: (id) => game.removePlayer(id),
-      onStatus: () => {
+      onStatus: (state, text) => {
         if (network) game.setHostFlag(network.isHost);
+        if (lobbyStatusEl) {
+          lobbyStatusEl.textContent = `Статус: ${text || state}`;
+        }
       }
     });
     game.onNetworkHit = (hitData) => {
@@ -213,6 +228,75 @@ async function bootstrap() {
     if (idx !== hoveredSlot) selectWheelSlot(idx);
   });
 
+  // ==================== F3 Lobby & Copy Logs ====================
+  let lobbyOpen = false;
+
+  function renderLobbyPlayers() {
+    if (!lobbyPlayersList) return;
+    lobbyPlayersList.innerHTML = "";
+    for (const [id, p] of game.players.entries()) {
+      const li = document.createElement("li");
+      const tag = id === game.localId ? "Вы" : (p.isBot ? "NPC" : (p.isHost ? "Хост" : "Игрок"));
+      li.innerHTML = `<span>${p.name || id}</span><span>${tag} · ${Math.max(0, Math.round(p.hp))} HP</span>`;
+      lobbyPlayersList.appendChild(li);
+    }
+  }
+
+  function setLobbyOpen(open) {
+    lobbyOpen = open;
+    lobbyModal.classList.toggle("hidden", !open);
+    if (open) {
+      game.keys.clear();
+      game.mouseDown = false;
+      game.scoped = false;
+      lobbyRoomInput.value = network ? network.roomId : discord.roomId;
+      lobbyWsInput.value = network ? network.serverUrl : "";
+      lobbyBotsBtn.textContent = `Боты: ${game.botsEnabled ? "ВКЛ" : "ВЫКЛ"}`;
+      renderLobbyPlayers();
+      if (document.pointerLockElement && document.exitPointerLock) {
+        try { document.exitPointerLock(); } catch {}
+      }
+    } else if (!game.wheelOpen && canvas.requestPointerLock) {
+      try { canvas.requestPointerLock(); } catch {}
+    }
+  }
+
+  lobbyCloseBtn.addEventListener("click", () => setLobbyOpen(false));
+  lobbyConnectBtn.addEventListener("click", () => {
+    const newRoom = lobbyRoomInput.value.trim() || "rubikon-party";
+    const newWs = lobbyWsInput.value.trim();
+    if (network) {
+      network.setRoom(newRoom, newWs);
+      window.history.replaceState(null, "", `#${network.roomId}`);
+    }
+  });
+  lobbyCopyLinkBtn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      lobbyCopyLinkBtn.textContent = "Ссылка скопирована!";
+      setTimeout(() => { lobbyCopyLinkBtn.textContent = "Копировать ссылку"; }, 1400);
+    } catch {}
+  });
+  lobbyBotsBtn.addEventListener("click", () => {
+    game.setBotsEnabled(!game.botsEnabled);
+    lobbyBotsBtn.textContent = `Боты: ${game.botsEnabled ? "ВКЛ" : "ВЫКЛ"}`;
+    renderLobbyPlayers();
+  });
+
+  copyLogsBtn.addEventListener("click", async () => {
+    const text = network
+      ? network.getLogsText()
+      : `Mode: ${game.soloMode ? "Discord/Solo" : "Local"} | Players: ${game.players.size}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      copyLogsBtn.textContent = "Скопировано!";
+      setTimeout(() => { copyLogsBtn.textContent = "Логи"; }, 1400);
+    } catch {
+      copyLogsBtn.textContent = "Ошибка";
+      setTimeout(() => { copyLogsBtn.textContent = "Логи"; }, 1400);
+    }
+  });
+
   // ==================== Controls ====================
   window.addEventListener("resize", () => renderer.resize());
   window.addEventListener("beforeunload", () => {
@@ -221,6 +305,16 @@ async function bootstrap() {
 
   window.addEventListener("keydown", (e) => {
     sound.unlock();
+    if (e.code === "F3") {
+      e.preventDefault();
+      if (game.wheelOpen) closeWeaponWheel(false);
+      setLobbyOpen(!lobbyOpen);
+      return;
+    }
+    if (lobbyOpen) {
+      if (e.code === "Escape") setLobbyOpen(false);
+      return;
+    }
     if (e.code === "KeyB" && !e.repeat) {
       if (game.wheelOpen) closeWeaponWheel(true);
       else openWeaponWheel();
@@ -311,6 +405,13 @@ async function bootstrap() {
 
   function updateAmmoHud() {
     const lp = game.localPlayer;
+    const hpVal = Math.max(0, Math.round(lp.hp || 0));
+    const hpPct = Math.max(0, Math.min(100, (hpVal / (lp.maxHp || 100)) * 100));
+    if (hpText) hpText.textContent = String(hpVal);
+    if (hpFill) hpFill.style.width = `${hpPct}%`;
+
+    if (lobbyOpen) renderLobbyPlayers();
+
     const drivingCar = lp.drivingVehicleId
       ? game.vehicles.find((v) => v.id === lp.drivingVehicleId)
       : null;

@@ -115,18 +115,13 @@ export class PlaneGame {
     return this.weaponAmmo[weaponId] || null;
   }
 
-  pickStreetSpawn() {
-    const spots = [
-      { x: 0, z: 0 }, { x: -12, z: 0 }, { x: 12, z: 0 },
-      { x: 0, z: -12 }, { x: 0, z: 12 },
-      { x: -42, z: 0 }, { x: 42, z: 0 },
-      { x: 0, z: -42 }, { x: 0, z: 42 },
-      { x: -42, z: -42 }, { x: 42, z: 42 }
-    ];
-    const base = spots[Math.floor(Math.random() * spots.length)];
+  pickStreetSpawn(fullCity = true) {
+    const roads = fullCity ? [-84, -42, 0, 42, 84] : [-42, 0, 42];
+    const rx = roads[Math.floor(Math.random() * roads.length)];
+    const rz = roads[Math.floor(Math.random() * roads.length)];
     return resolveCityCollision(
-      base.x + (Math.random() - 0.5) * 6,
-      base.z + (Math.random() - 0.5) * 6,
+      rx + (Math.random() - 0.5) * 8,
+      rz + (Math.random() - 0.5) * 8,
       CONFIG.PLAYER_RADIUS
     );
   }
@@ -170,9 +165,11 @@ export class PlaneGame {
     const lp = this.localPlayer;
     if (!lp.alive || lp.drivingVehicleId) return null;
     let best = null;
-    let bestDist = 3.6;
+    let bestDist = 3.8;
     for (const v of this.vehicles) {
-      if (v.exploded || v.driverId) continue;
+      if (v.exploded) continue;
+      const occupant = v.driverId ? this.players.get(v.driverId) : null;
+      if (occupant && !occupant.isBot) continue;
       const d = Math.hypot(v.x - lp.x, v.z - lp.z);
       if (d < bestDist) {
         bestDist = d;
@@ -191,9 +188,10 @@ export class PlaneGame {
         car.driverId = null;
         const cosA = Math.cos(car.angle);
         const sinA = Math.sin(car.angle);
+        // Exit on Left-Hand Drive (driver) side (+X local)
         const exitPos = resolveCityCollision(
-          car.x - cosA * 1.75,
-          car.z + sinA * 1.75,
+          car.x + cosA * 1.75,
+          car.z - sinA * 1.75,
           CONFIG.PLAYER_RADIUS
         );
         lp.x = exitPos.x;
@@ -208,6 +206,23 @@ export class PlaneGame {
 
     const near = this.getNearestEnterableVehicle();
     if (!near) return false;
+
+    // Eject NPC driver if car was occupied by a bot
+    if (near.driverId) {
+      const npc = this.players.get(near.driverId);
+      if (npc) {
+        npc.drivingVehicleId = null;
+        npc.driveInput = null;
+        const cosA = Math.cos(near.angle);
+        const sinA = Math.sin(near.angle);
+        const ejPos = resolveCityCollision(near.x + cosA * 1.85, near.z - sinA * 1.85, CONFIG.PLAYER_RADIUS);
+        npc.x = ejPos.x;
+        npc.z = ejPos.z;
+        npc.y = 0;
+        npc.aggro = true;
+      }
+    }
+
     near.driverId = lp.id;
     lp.drivingVehicleId = near.id;
     lp.reloadingTimer = 0;
@@ -635,8 +650,23 @@ export class PlaneGame {
           hitFlash: 0,
           wanderTimer: 0.5 + Math.random() * 2,
           goalX: sp.x,
-          goalZ: sp.z
+          goalZ: sp.z,
+          drivingVehicleId: null,
+          driveInput: null,
+          driveGoalX: 0,
+          driveGoalZ: 0,
+          driveStuckTimer: 0
         };
+        if (idx < 4) {
+          const car = this.vehicles.find((v) => !v.driverId && !v.exploded);
+          if (car) {
+            car.driverId = id;
+            bot.drivingVehicleId = car.id;
+            const roads = [-84, -42, 0, 42, 84];
+            bot.driveGoalX = roads[Math.floor(Math.random() * roads.length)];
+            bot.driveGoalZ = roads[Math.floor(Math.random() * roads.length)];
+          }
+        }
         this.bots.set(id, bot);
         this.players.set(id, bot);
       });
@@ -890,6 +920,8 @@ export class PlaneGame {
 
   updateBot(p, dt) {
     if (!p.alive) {
+      p.drivingVehicleId = null;
+      p.driveInput = null;
       p.respawnTimer -= dt;
       if (p.respawnTimer <= 0) {
         const sp = this.pickStreetSpawn();
@@ -901,6 +933,57 @@ export class PlaneGame {
         p.alive = true;
       }
       return;
+    }
+
+    // NPC Driving AI along city road grid
+    if (p.drivingVehicleId) {
+      const car = this.vehicles.find((v) => v.id === p.drivingVehicleId);
+      if (!car || car.exploded || car.driverId !== p.id || car.hp < car.maxHp * 0.25) {
+        if (car && car.driverId === p.id) car.driverId = null;
+        p.drivingVehicleId = null;
+        p.driveInput = null;
+        p.y = 0;
+      } else {
+        const roads = [-84, -42, 0, 42, 84];
+        const gdx = p.driveGoalX - car.x;
+        const gdz = p.driveGoalZ - car.z;
+        const gdist = Math.hypot(gdx, gdz);
+        if (gdist < 7.5) {
+          // Pick an adjacent intersection along X or Z road
+          const curRx = roads.reduce((a, b) => (Math.abs(b - car.x) < Math.abs(a - car.x) ? b : a));
+          const curRz = roads.reduce((a, b) => (Math.abs(b - car.z) < Math.abs(a - car.z) ? b : a));
+          if (Math.random() > 0.45) {
+            const idx = roads.indexOf(curRx);
+            const nextIdx = clamp(idx + (Math.random() > 0.5 ? 1 : -1), 0, roads.length - 1);
+            p.driveGoalX = roads[nextIdx];
+            p.driveGoalZ = curRz;
+          } else {
+            const idx = roads.indexOf(curRz);
+            const nextIdx = clamp(idx + (Math.random() > 0.5 ? 1 : -1), 0, roads.length - 1);
+            p.driveGoalX = curRx;
+            p.driveGoalZ = roads[nextIdx];
+          }
+        }
+
+        if (car.speed < 0.7) p.driveStuckTimer = (p.driveStuckTimer || 0) + dt;
+        else p.driveStuckTimer = 0;
+
+        const targetAngle = Math.atan2(p.driveGoalX - car.x, p.driveGoalZ - car.z);
+        const diff = angleDiff(car.angle, targetAngle);
+        if (p.driveStuckTimer > 1.2) {
+          p.driveInput = { throttle: -0.65, steer: diff > 0 ? -0.9 : 0.9, handbrake: false };
+          if (p.driveStuckTimer > 2.1) p.driveStuckTimer = 0;
+        } else {
+          const turnSharp = Math.abs(diff);
+          const throttle = turnSharp > 0.7 ? 0.35 : 0.62;
+          p.driveInput = {
+            throttle,
+            steer: clamp(diff * 1.6, -1, 1),
+            handbrake: false
+          };
+        }
+        return;
+      }
     }
 
     if (p.attackCooldown > 0) p.attackCooldown = Math.max(0, p.attackCooldown - dt);

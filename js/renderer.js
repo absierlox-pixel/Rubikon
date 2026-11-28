@@ -18,6 +18,40 @@ function angleDiff(from, to) {
   return d;
 }
 
+function createNameplateSprite(name, isBot) {
+  const c = document.createElement("canvas");
+  c.width = 256;
+  c.height = 64;
+  const ctx = c.getContext("2d");
+
+  const label = String(name || "Игрок").slice(0, 18);
+  ctx.font = "bold 24px 'Segoe UI', Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  const w = Math.min(244, Math.max(84, ctx.measureText(label).width + 28));
+  const x = (256 - w) * 0.5;
+  ctx.fillStyle = "rgba(12, 15, 20, 0.68)";
+  ctx.beginPath();
+  ctx.roundRect ? ctx.roundRect(x, 14, w, 36, 12) : ctx.rect(x, 14, w, 36);
+  ctx.fill();
+
+  ctx.strokeStyle = isBot ? "rgba(255,255,255,0.2)" : "rgba(102, 204, 255, 0.55)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  ctx.fillStyle = isBot ? "#e4e7ec" : "#ffffff";
+  ctx.fillText(label, 128, 33);
+
+  const tex = new THREE.CanvasTexture(c);
+  if (THREE.sRGBEncoding) tex.encoding = THREE.sRGBEncoding;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(1.65, 0.42, 1);
+  sprite.position.set(0, 2.38, 0);
+  return sprite;
+}
+
 function createDaySkyTexture() {
   const c = document.createElement("canvas");
   c.width = 512;
@@ -420,23 +454,27 @@ export class PlaneRenderer3D {
     chest.castShadow = true;
     torso.add(chest);
 
-    // Undershirt V-neck & metallic zipper
-    const undershirt = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.22, 0.04), shirtMat);
-    undershirt.position.set(0, 0.48, 0.165);
+    // Undershirt V-neck & metallic zipper (angled flush with chest taper)
+    const undershirt = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.19, 0.025), shirtMat);
+    undershirt.position.set(0, 0.49, 0.172);
+    undershirt.rotation.x = -0.09;
     torso.add(undershirt);
 
-    const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.38, 0.02), metalMat);
-    zipper.position.set(0, 0.28, 0.175);
+    const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.34, 0.016), metalMat);
+    zipper.position.set(0, 0.27, 0.165);
+    zipper.rotation.x = -0.09;
     torso.add(zipper);
 
     // Chest pocket flaps & collar lapels
     for (const s of [-1, 1]) {
-      const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.07, 0.022), jacketMat);
-      pocket.position.set(s * 0.125, 0.41, 0.175);
+      const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.06, 0.016), jacketMat);
+      pocket.position.set(s * 0.125, 0.41, 0.172);
+      pocket.rotation.x = -0.09;
       torso.add(pocket);
 
-      const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.03), jacketMat);
-      lapel.position.set(s * 0.075, 0.52, 0.168);
+      const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.16, 0.022), jacketMat);
+      lapel.position.set(s * 0.072, 0.51, 0.174);
+      lapel.rotation.x = -0.09;
       lapel.rotation.z = -s * 0.22;
       torso.add(lapel);
     }
@@ -460,33 +498,33 @@ export class PlaneRenderer3D {
     head.castShadow = true;
     headPivot.add(head);
 
-    // Nose bridge & Ears
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.062, 0.045), skinMat);
-    nose.position.set(0, 0.215, 0.172);
+    // Subtle Nose bridge & Ears
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.048, 0.030), skinMat);
+    nose.position.set(0, 0.215, 0.168);
     nose.rotation.x = -0.18;
     headPivot.add(nose);
 
     for (const s of [-1, 1]) {
-      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), skinMat);
-      ear.scale.set(0.45, 1.0, 0.72);
-      ear.position.set(s * 0.168, 0.22, -0.01);
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.034, 8, 8), skinMat);
+      ear.scale.set(0.42, 0.95, 0.68);
+      ear.position.set(s * 0.164, 0.22, -0.01);
       headPivot.add(ear);
     }
 
-    // Layered Hair (main cap + top volume + back fade)
+    // Smooth Layered Hair
     const hair = new THREE.Mesh(
-      new THREE.SphereGeometry(0.195, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.56),
+      new THREE.SphereGeometry(0.194, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.56),
       hairMat
     );
-    hair.position.set(0, 0.245, -0.018);
+    hair.position.set(0, 0.245, -0.016);
     hair.rotation.x = -0.24;
     hair.scale.set(0.92, 1.04, 0.99);
     hair.castShadow = true;
     headPivot.add(hair);
 
-    const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.065, 0.22), hairMat);
-    hairTop.position.set(0, 0.40, 0.01);
-    hairTop.rotation.x = 0.12;
+    const hairTop = new THREE.Mesh(new THREE.SphereGeometry(0.165, 14, 10), hairMat);
+    hairTop.scale.set(0.88, 0.36, 1.02);
+    hairTop.position.set(0, 0.395, 0.0);
     headPivot.add(hairTop);
 
     const makeArm = (side) => {
@@ -526,16 +564,16 @@ export class PlaneRenderer3D {
       }
 
       const hand = new THREE.Group();
-      hand.position.y = -0.30;
-      const palm = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.075, 0.082), skinMat);
+      hand.position.y = -0.295;
+      const palm = new THREE.Mesh(new THREE.BoxGeometry(0.056, 0.068, 0.072), skinMat);
       palm.castShadow = true;
       hand.add(palm);
-      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.056, 0.052, 0.048), skinMat);
-      fingers.position.set(0, -0.042, 0.022);
+      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.048, 0.042), skinMat);
+      fingers.position.set(0, -0.038, 0.018);
       fingers.rotation.x = 0.35;
       hand.add(fingers);
-      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.044, 0.026), skinMat);
-      thumb.position.set(-side * 0.036, -0.015, 0.034);
+      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.020, 0.040, 0.024), skinMat);
+      thumb.position.set(-side * 0.032, -0.014, 0.028);
       hand.add(thumb);
       elbow.add(hand);
 
@@ -610,6 +648,9 @@ export class PlaneRenderer3D {
     const leftLeg = makeLeg(-1);
     const rightLeg = makeLeg(1);
 
+    const nameplate = createNameplateSprite(player.name, player.isBot);
+    root.add(nameplate);
+
     this.scene.add(root);
     return {
       root,
@@ -622,7 +663,8 @@ export class PlaneRenderer3D {
       rightLeg,
       weaponMount,
       weapons,
-      jacketMat
+      jacketMat,
+      nameplate
     };
   }
 
@@ -671,18 +713,22 @@ export class PlaneRenderer3D {
 
     if (drivingCar) {
       const steer = drivingCar.steerAngle || 0;
-      pelvisY = 0.52;
-      pelvisRoll = -(drivingCar.roll || 0) * 0.6;
-      torsoPitch = -0.14;
+      rig.pelvis.scale.setScalar(0.84);
+      pelvisY = 0.28;
+      pelvisRoll = -(drivingCar.roll || 0) * 0.5;
+      torsoPitch = -0.22;
       torsoYaw = 0;
       headYaw = steer * 0.55;
-      headPitch = 0.04;
-      lHipX = -1.32; rHipX = -1.32;
-      lKneeX = 1.38; rKneeX = 1.38;
+      headPitch = 0.12;
+      lHipX = -1.38; rHipX = -1.38;
+      lKneeX = 1.44; rKneeX = 1.44;
       lFootX = 0.25; rFootX = 0.25;
-      lShX = -1.05 - steer * 0.35; lShZ = 0.14; lElbX = -0.58;
-      rShX = -1.05 + steer * 0.35; rShZ = -0.14; rElbX = -0.58;
+      lShX = -0.98 - steer * 0.35; lShZ = 0.14; lElbX = -0.58;
+      rShX = -0.98 + steer * 0.35; rShZ = -0.14; rElbX = -0.58;
+      if (rig.nameplate) rig.nameplate.position.y = 1.88;
     } else if (inAir) {
+      rig.pelvis.scale.setScalar(1.0);
+      if (rig.nameplate) rig.nameplate.position.y = 2.38;
       lHipX = -0.48; rHipX = 0.24;
       lKneeX = 0.85; rKneeX = 0.42;
       lFootX = 0.25; rFootX = 0.15;
@@ -731,6 +777,8 @@ export class PlaneRenderer3D {
       lKneeX = Math.max(0, s) * 0.52;
       rKneeX = Math.max(0, -s) * 0.52;
     } else {
+      rig.pelvis.scale.setScalar(1.0);
+      if (rig.nameplate) rig.nameplate.position.y = 2.38;
       // Subtle idle breathing & weight shift
       pelvisY = 0.98 + breath * 0.012;
       torsoPitch = 0.02 + breath * 0.012;
@@ -1090,6 +1138,9 @@ export class PlaneRenderer3D {
       }
       const hideLocalInFPS = id === game.localId && (game.viewMode === "fps" || game.scoped);
       rig.root.visible = player.alive !== false && !hideLocalInFPS;
+      if (rig.nameplate) {
+        rig.nameplate.visible = id !== game.localId;
+      }
       if (rig.root.visible) {
         rig.root.position.set(player.x, player.y || 0, player.z);
         rig.root.rotation.y = player.angle || 0;
@@ -1292,9 +1343,9 @@ export class PlaneRenderer3D {
       if (game.viewMode === "fps") {
         const sinA = Math.sin(drivingCar.angle);
         const cosA = Math.cos(drivingCar.angle);
-        const eyeX = drivingCar.x - 0.40 * cosA + 0.15 * sinA;
-        const eyeY = drivingCar.y + 1.24;
-        const eyeZ = drivingCar.z + 0.40 * sinA + 0.15 * cosA;
+        const eyeX = drivingCar.x + 0.40 * cosA + 0.12 * sinA;
+        const eyeY = drivingCar.y + 1.08;
+        const eyeZ = drivingCar.z - 0.40 * sinA + 0.12 * cosA;
         this.camera.position.set(eyeX + sx * 0.25, eyeY + sy * 0.25, eyeZ);
         this.camera.lookAt(eyeX - backX * 20, eyeY - backY * 20, eyeZ - backZ * 20);
       } else {

@@ -19,6 +19,41 @@
       </div>
     </div>
 
+    <!-- Top-Left Player HP Bar -->
+    <div class="hp-hud" id="hp-hud">
+      <div class="hp-label">HP <span id="hp-text">100</span></div>
+      <div class="hp-track"><div class="hp-fill" id="hp-fill"></div></div>
+    </div>
+
+    <!-- Bottom-Left Small Copy Logs Button -->
+    <button class="copy-logs-btn" id="copy-logs-btn" type="button" title="Скопировать логи подключения">Логи</button>
+
+    <!-- F3 Lobby & Connection Modal -->
+    <div class="lobby-modal hidden" id="lobby-modal">
+      <div class="lobby-card">
+        <div class="lobby-header">
+          <span>Лобби и подключение</span>
+          <button class="lobby-close" id="lobby-close-btn" type="button">✕</button>
+        </div>
+        <div class="lobby-status" id="lobby-status">Статус: подключение...</div>
+        <div class="lobby-row">
+          <label for="lobby-room-input">Комната (ID)</label>
+          <input id="lobby-room-input" type="text" placeholder="rubikon-party" maxlength="32">
+        </div>
+        <div class="lobby-row">
+          <label for="lobby-ws-input">WS Сервер (необязательно)</label>
+          <input id="lobby-ws-input" type="text" placeholder="wss://...">
+        </div>
+        <div class="lobby-actions">
+          <button id="lobby-connect-btn" class="lobby-btn primary" type="button">Подключиться</button>
+          <button id="lobby-copy-link-btn" class="lobby-btn" type="button">Копировать ссылку</button>
+          <button id="lobby-bots-btn" class="lobby-btn" type="button">Боты: ВКЛ</button>
+        </div>
+        <div class="lobby-players-title">Игроки в сессии:</div>
+        <ul class="lobby-players-list" id="lobby-players-list"></ul>
+      </div>
+    </div>
+
     <!-- Minimal Weapon Ammo HUD (Bottom-Right, Arial Black) -->
     <div class="ammo-hud hidden" id="ammo-hud">30/120</div>
 

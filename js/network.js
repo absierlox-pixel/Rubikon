@@ -24,7 +24,12 @@ export class PartyNetwork {
     this.roomId = sanitizeRoomId(options.roomId);
     this.serverUrl = (options.serverUrl || "").trim();
     this.onState = options.onState;
-    this.onStatus = options.onStatus;
+    this.logs = [];
+    this._rawOnStatus = options.onStatus || (() => {});
+    this.onStatus = (state, text) => {
+      this.addLog(`[${state}] ${text}`);
+      this._rawOnStatus(state, text);
+    };
     this.onPeerJoin = options.onPeerJoin;
     this.onPeerLeave = options.onPeerLeave;
     this.onHit = options.onHit || (() => {});
@@ -43,7 +48,21 @@ export class PartyNetwork {
     this.peersSnapshot = new Map();
   }
 
+  addLog(msg) {
+    const t = new Date().toTimeString().slice(0, 8);
+    this.logs.push(`[${t}] ${msg}`);
+    if (this.logs.length > 200) this.logs.shift();
+  }
+
+  getLogsText() {
+    return [
+      `Room: ${this.roomId} | Mode: ${this.mode} | Host: ${this.isHost} | LocalId: ${this.localId}`,
+      ...this.logs
+    ].join("\n");
+  }
+
   start() {
+    this.addLog(`start() room=${this.roomId} mode=${this.serverUrl ? "ws" : "p2p"}`);
     this.setupBroadcastChannel();
     if (this.serverUrl) {
       this.mode = "ws";
@@ -494,6 +513,7 @@ export class PartyNetwork {
     this.peersSnapshot.set(player.id, player);
     this.onState(player);
     if (!existed) {
+      this.addLog(`Peer joined: ${player.name || player.id} (${player.id})`);
       this.onPeerJoin(player);
     }
   }
@@ -501,6 +521,7 @@ export class PartyNetwork {
   removeRemotePlayer(id) {
     if (this.peersSnapshot.has(id)) {
       this.peersSnapshot.delete(id);
+      this.addLog(`Peer left: ${id}`);
       this.onPeerLeave(id);
     }
   }
