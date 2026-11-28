@@ -210,20 +210,20 @@ export function applyZoneDamage(v, localX, localZ, amount, game, hitWorldPos = n
 
   const prevHp = v.hp;
   v.hp = Math.max(0, v.hp - amount);
-  const dmgNorm = clamp(amount / (def.maxHp * 0.35), 0, 0.85);
+  const dmgNorm = clamp(amount / (def.maxHp * 0.18), 0.15, 1.0);
 
   // Queue localized soft-body impact for BeamNG-style vertex deformation
   const impLen = Math.hypot(localX, localZ) || 1;
   const hitY = hitWorldPos ? clamp(hitWorldPos.y - v.y, 0.25, def.height) : 0.68;
   v.impacts.push({
-    lx: clamp(localX, -def.width * 0.52, def.width * 0.52),
+    lx: clamp(localX, -def.width * 0.50, def.width * 0.50),
     ly: hitY,
-    lz: clamp(localZ, -def.length * 0.52, def.length * 0.52),
+    lz: clamp(localZ, -def.length * 0.50, def.length * 0.50),
     dx: -localX / impLen,
-    dy: 0.14,
+    dy: 0.16,
     dz: -localZ / impLen,
-    radius: clamp(0.95 + dmgNorm * 1.45, 0.95, 2.0),
-    strength: clamp(0.14 + dmgNorm * 0.62, 0.12, 0.58)
+    radius: clamp(1.35 + dmgNorm * 1.15, 1.35, 2.5),
+    strength: clamp(0.28 + dmgNorm * 0.52, 0.28, 0.78)
   });
   if (v.impacts.length > 24) v.impacts.shift();
 
@@ -538,8 +538,8 @@ export function updateVehicles(vehicles, players, game, dt) {
           const lever = hitCorner.lx * nz - hitCorner.lz * nx;
           v.angVel += clamp(lever * impactSpeed * 0.06, -3.5, 3.5);
 
-          if (impactSpeed > 4.2) {
-            const dmg = (impactSpeed - 3.8) * 2.1;
+          if (impactSpeed > 2.8) {
+            const dmg = (impactSpeed - 2.4) * 5.2;
             applyZoneDamage(v, hitCorner.lx, hitCorner.lz, dmg, game, hitCorner);
             v.pitch += (hitCorner.lz > 0 ? 0.06 : -0.06) * clamp(impactSpeed / 18, 0.2, 1.2);
             game.pushEvent({
@@ -731,12 +731,12 @@ function applySoftBodyImpact(vm, imp) {
       const d = Math.hypot(wx - imp.lx, wy - imp.ly, wz - imp.lz);
       if (d < imp.radius) {
         const t = 1 - d / imp.radius;
-        const falloff = t * t;
+        const falloff = Math.sqrt(t);
         // Sheet-metal crumple fold + rim bulge
-        const crease = Math.sin(wx * 14.2 + wy * 19.7 + wz * 15.3) * 0.26;
+        const crease = Math.sin(wx * 12.2 + wy * 16.7 + wz * 13.3) * 0.34;
         const push = imp.strength * falloff * (1 + crease);
         const nx = vx + imp.dx * push;
-        const ny = vy + imp.dy * push + Math.abs(crease) * imp.strength * falloff * 0.45;
+        const ny = vy + imp.dy * push + Math.abs(crease) * imp.strength * falloff * 0.52;
         const nz = vz + imp.dz * push;
         pos.setXYZ(i, nx, ny, nz);
         dirty = true;
@@ -965,7 +965,7 @@ export function createVehicleMesh(v) {
   // Roof & Pillars & Glass (generous headroom so driver's head stays inside cabin)
   const roofH = isSuv ? 0.66 : 0.56;
   const roofY = baseH + bodyH + roofH;
-  const roof = new THREE.Mesh(new THREE.BoxGeometry(W * 0.78, 0.07, L * (isSuv ? 0.58 : 0.40)), paintMat);
+  const roof = makeDeformableBox(W * 0.78, 0.07, L * (isSuv ? 0.58 : 0.40), 4, 1, 4, paintMat, "roof", deformables);
   roof.position.set(0, roofY, isSuv ? -0.18 : -0.06);
   roof.castShadow = true;
   bodyTilt.add(roof);

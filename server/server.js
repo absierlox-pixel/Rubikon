@@ -169,9 +169,10 @@ function assignHost(room) {
   }
 }
 
-function broadcastRoom(room, payload) {
+function broadcastRoom(room, payload, excludeId = null) {
   const raw = JSON.stringify(payload);
-  for (const entry of room.values()) {
+  for (const [pid, entry] of room.entries()) {
+    if (excludeId && pid === excludeId) continue;
     if (entry.ws.readyState === 1) {
       try {
         entry.ws.send(raw);
@@ -231,6 +232,19 @@ wss.on("connection", (ws) => {
       const prev = room.get(currentPlayerId);
       const isHost = prev ? Boolean(prev.player.isHost) : room.size === 0;
       room.set(currentPlayerId, { ws, player: { ...data.player, isHost } });
+      if (data.drivenVehicle) {
+        broadcastRoom(room, { type: "vehicles", vehicles: [data.drivenVehicle] }, currentPlayerId);
+      }
+      return;
+    }
+
+    if (data.type === "vehicles" && Array.isArray(data.vehicles)) {
+      broadcastRoom(room, { type: "vehicles", vehicles: data.vehicles }, currentPlayerId);
+      return;
+    }
+
+    if (data.type === "hit" && data.hit) {
+      broadcastRoom(room, { type: "hit", hit: data.hit }, currentPlayerId);
       return;
     }
 

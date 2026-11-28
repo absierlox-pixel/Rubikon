@@ -45,6 +45,7 @@ async function bootstrap() {
   const lobbyRoomInput = document.getElementById("lobby-room-input");
   const lobbyWsInput = document.getElementById("lobby-ws-input");
   const lobbyConnectBtn = document.getElementById("lobby-connect-btn");
+  const lobbyNewRoomBtn = document.getElementById("lobby-new-room-btn");
   const lobbyCopyLinkBtn = document.getElementById("lobby-copy-link-btn");
   const lobbyBotsBtn = document.getElementById("lobby-bots-btn");
   const lobbyPlayersList = document.getElementById("lobby-players-list");
@@ -67,10 +68,13 @@ async function bootstrap() {
       window.history.replaceState(null, "", `#${discord.roomId}`);
     }
     game.setBotsEnabled(true);
+    const autoWsUrl = (window.location.protocol.startsWith("http") && !window.location.hostname.endsWith("github.io"))
+      ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`
+      : "";
     network = new PartyNetwork({
       localId,
       roomId: discord.roomId,
-      serverUrl: "",
+      serverUrl: autoWsUrl,
       getLocalPlayer: () => game.localPlayer,
       getVehicles: () => game.getCompactVehicles(),
       onVehicles: (list, fromGuest) => game.syncRemoteVehicles(list, fromGuest),
@@ -272,6 +276,14 @@ async function bootstrap() {
     const newWs = lobbyWsInput.value.trim();
     if (network) {
       network.setRoom(newRoom, newWs);
+      window.history.replaceState(null, "", `#${network.roomId}`);
+    }
+  });
+  lobbyNewRoomBtn.addEventListener("click", () => {
+    const newRoom = `rubikon-${Math.random().toString(36).slice(2, 7)}`;
+    lobbyRoomInput.value = newRoom;
+    if (network) {
+      network.setRoom(newRoom, lobbyWsInput.value.trim());
       window.history.replaceState(null, "", `#${network.roomId}`);
     }
   });

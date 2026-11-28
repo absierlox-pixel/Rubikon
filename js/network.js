@@ -52,6 +52,8 @@ export class PartyNetwork {
     this.reconnectTimer = null;
     this.destroyed = false;
     this.peersSnapshot = new Map();
+    this.tickCount = 0;
+    this.wsEverOpened = false;
   }
 
   addLog(msg) {
@@ -320,10 +322,11 @@ export class PartyNetwork {
 
       const connectTimeout = setTimeout(() => {
         if (!this.destroyed && this.hostConn === conn && !conn.open) {
+          this.addLog("Host connection timeout, retrying...");
           this.onStatus("local", "Хост не отвечает, пробую стать хостом...");
-          this.scheduleP2PReconnect(800 + Math.random() * 1200);
+          this.scheduleP2PReconnect(600 + Math.random() * 800);
         }
-      }, 8000);
+      }, 4500);
 
       conn.on("open", () => {
         clearTimeout(connectTimeout);
@@ -460,6 +463,7 @@ export class PartyNetwork {
           ws.close();
           return;
         }
+        this.wsEverOpened = true;
         this.onStatus("online", "Сервер подключен");
         ws.send(JSON.stringify({
           type: "join",
@@ -492,6 +496,8 @@ export class PartyNetwork {
               this.handleRemotePlayer(p);
             }
           }
+        } else if (data.type === "vehicles" && Array.isArray(data.vehicles) && this.onVehicles) {
+          this.onVehicles(data.vehicles, true);
         } else if (data.type === "leave" && data.id) {
           this.removeRemotePlayer(data.id);
         } else if (data.type === "hit" && data.hit) {
@@ -508,6 +514,12 @@ export class PartyNetwork {
       ws.onclose = () => {
         this.ws = null;
         if (!this.destroyed) {
+          if (!this.wsEverOpened && typeof window.Peer === "function") {
+            this.addLog("WS unreachable, falling back to P2P");
+            this.mode = "p2p";
+            this.connectP2P();
+            return;
+          }
           this.onStatus("local", "Нет связи с сервером");
           this.reconnectTimer = setTimeout(() => {
             if (!this.destroyed && this.mode === "ws") {
@@ -546,9 +558,11 @@ export class PartyNetwork {
     if (!local) {
       return;
     }
-    const allVehicles = this.getVehicles ? this.getVehicles() : null;
-    const drivenVehicle = (allVehicles && local.drivingVehicleId)
-      ? allVehicles.find((v) => v.id === local.drivingVehicleId) || null
+    this.tickCount += 1;
+    const syncVehiclesNow = (this.tickCount % 2) === 0;
+    const allVehicles = (syncVehiclesNow && this.getVehicles) ? this.getVehicles() : null;
+    const drivenVehicle = (syncVehiclesNow && this.getVehicles && local.drivingVehicleId)
+      ? this.getVehicles().find((v) => v.id === local.drivingVehicleId) || null
       : null;
 
     if (this.channel) {
@@ -575,16 +589,15 @@ export class PartyNetwork {
             { ...local, isHost: true },
             ...Array.from(this.peersSnapshot.values())
           ];
-          this.broadcastToGuests({ type: "snapshot", players, vehicles: allVehicles });
+          const msg = { type: "snapshot", players };
+          if (allVehicles) msg.vehicles = allVehicles;
+          this.broadcastToGuests(msg);
         }
       } else if (this.hostConn && this.hostConn.open) {
         try {
-          this.hostConn.send({
-            type: "state",
-            roomId: this.roomId,
-            player: local,
-            drivenVehicle
-          });
+          const msg = { type: "state", roomId: this.roomId, player: local };
+          if (drivenVehicle) msg.drivenVehicle = drivenVehicle;
+          this.hostConn.send(msg);
         } catch {}
       }
       return;
@@ -592,11 +605,13 @@ export class PartyNetwork {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try {
-        this.ws.send(JSON.stringify({
+        const msg = {
           type: "state",
           roomId: this.roomId,
           player: local
-        }));
+        };
+        if (drivenVehicle) msg.drivenVehicle = drivenVehicle;
+        this.ws.send(JSON.stringify(msg));
       } catch {}
     }
   }
