@@ -208,11 +208,12 @@ export class PartyNetwork {
     });
     this.peer = peer;
 
-    peer.on("open", () => {
+    peer.on("open", (id) => {
       if (this.destroyed || this.peer !== peer) {
         return;
       }
       this.isHost = true;
+      this.addLog(`Host peer opened: ${id}`);
       this.onStatus("online", "Вы хост (P2P)");
     });
 
@@ -313,10 +314,11 @@ export class PartyNetwork {
     });
     this.peer = peer;
 
-    peer.on("open", () => {
+    peer.on("open", (id) => {
       if (this.destroyed || this.peer !== peer) {
         return;
       }
+      this.addLog(`Guest peer opened: ${id}, connecting to ${hostPeerId}`);
       const conn = peer.connect(hostPeerId, { reliable: true });
       this.hostConn = conn;
 

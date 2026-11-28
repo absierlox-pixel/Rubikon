@@ -403,13 +403,13 @@ export class PlaneRenderer3D {
     const root = new THREE.Group();
 
     const jacketMat = new THREE.MeshStandardMaterial({
-      map: this.getFabricTexture(player.color),
+      map: this.getFabricTexture(player.isMilitary ? "#4b5a38" : player.color),
       roughness: 0.74,
       metalness: 0.06
     });
-    const shirtMat = new THREE.MeshStandardMaterial({ color: 0x1d2026, roughness: 0.85, metalness: 0.02 });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: player.isMilitary ? 0x2c3322 : 0x1d2026, roughness: 0.85, metalness: 0.02 });
     const pantsMat = new THREE.MeshStandardMaterial({
-      map: this.denimTex,
+      map: player.isMilitary ? this.getFabricTexture("#3a462c") : this.denimTex,
       roughness: 0.84,
       metalness: 0.04
     });
@@ -526,6 +526,23 @@ export class PlaneRenderer3D {
     hairTop.scale.set(0.88, 0.36, 1.02);
     hairTop.position.set(0, 0.395, 0.0);
     headPivot.add(hairTop);
+
+    if (player.isMilitary) {
+      const helmetMat = new THREE.MeshStandardMaterial({ color: 0x364229, roughness: 0.7, metalness: 0.12 });
+      const helmet = new THREE.Mesh(
+        new THREE.SphereGeometry(0.206, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.56),
+        helmetMat
+      );
+      helmet.position.set(0, 0.255, -0.01);
+      helmet.scale.set(0.95, 1.02, 1.02);
+      helmet.castShadow = true;
+      headPivot.add(helmet);
+
+      const brim = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.022, 0.11), helmetMat);
+      brim.position.set(0, 0.30, 0.165);
+      brim.rotation.x = 0.15;
+      headPivot.add(brim);
+    }
 
     const makeArm = (side) => {
       const shoulder = new THREE.Group();

@@ -2,8 +2,10 @@ import { CONFIG, WEAPON_DEFS } from "./config.js";
 import { resolveCityCollision, raycastCity } from "./city.js";
 import {
   createInitialVehicles,
+  createVehicleState,
   updateVehicles,
   damageVehicleFromHit,
+  explodeVehicle,
   VEHICLE_TYPES
 } from "./vehicles.js";
 
@@ -42,6 +44,7 @@ export class PlaneGame {
     this.events = [];
     this.rockets = [];
     this.vehicles = createInitialVehicles();
+    this.tckEvent = null;
     this.worldHalf = CONFIG.WORLD_SIZE / 2 - 2.0;
 
     this.weaponAmmo = makeInitialAmmo();
@@ -182,6 +185,7 @@ export class PlaneGame {
   toggleEnterExitVehicle() {
     const lp = this.localPlayer;
     if (!lp.alive) return false;
+    if (this.tckEvent && this.tckEvent.phase === "abduct") return false;
     if (lp.drivingVehicleId) {
       const car = this.vehicles.find((v) => v.id === lp.drivingVehicleId);
       if (car) {
@@ -201,6 +205,7 @@ export class PlaneGame {
         lp.vz = car.vz * 0.25;
       }
       lp.drivingVehicleId = null;
+      this.maybeTriggerTckEvent();
       return true;
     }
 
@@ -902,6 +907,7 @@ export class PlaneGame {
 
     // Update vehicles & vehicle physics
     updateVehicles(this.vehicles, this.players, this, dt);
+    this.updateTckEvent(dt);
 
     // Update flying RPG rockets
     for (let i = this.rockets.length - 1; i >= 0; i--) {
@@ -975,7 +981,207 @@ export class PlaneGame {
     }
   }
 
+  maybeTriggerTckEvent() {
+    if (this.tckEvent || !this.localPlayer.alive) return;
+    if (Math.random() >= 0.10) return; // 10% chance
+
+    const lp = this.localPlayer;
+    const roads = [-84, -42, 0, 42, 84];
+    // Pick a road spot 28-48m away from player
+    let sx = 0, sz = 0;
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const rx = roads[Math.floor(Math.random() * roads.length)];
+      const rz = roads[Math.floor(Math.random() * roads.length)];
+      const d = Math.hypot(rx - lp.x, rz - lp.z);
+      if (d > 24 && d < 55) {
+        sx = rx;
+        sz = rz;
+        break;
+      }
+    }
+    if (sx === 0 && sz === 0) {
+      sx = clamp(lp.x + (Math.random() > 0.5 ? 32 : -32), -100, 100);
+      sz = clamp(lp.z + (Math.random() > 0.5 ? 32 : -32), -100, 100);
+    }
+
+    const uid = Date.now().toString(36);
+    const vanId = `tck-van-${uid}`;
+    const ang = Math.atan2(lp.x - sx, lp.z - sz);
+    const van = createVehicleState(vanId, "van", sx, sz, ang, 0);
+    this.vehicles.push(van);
+
+    const makeMilitaryNpc = (id, name, driving) => ({
+      id,
+      name,
+      color: "#4b5a38",
+      isMilitary: true,
+      isTck: true,
+      x: sx, y: 0, z: sz,
+      vx: 0, vy: 0, vz: 0,
+      kx: 0, kz: 0,
+      angle: ang,
+      aimYaw: ang,
+      aimPitch: 0,
+      turnVel: 0,
+      turnStepTimer: 0,
+      moveSpeed: 0,
+      sprinting: false,
+      weapon: "fists",
+      recoil: 0,
+      barrelSpin: 0,
+      isHost: false,
+      isBot: true,
+      aggro: false,
+      walkPhase: Math.random() * 6,
+      hp: 120,
+      maxHp: 120,
+      alive: true,
+      respawnTimer: 0,
+      attackTimer: 0,
+      attackDuration: 0.34,
+      attackCombo: 0,
+      attackCooldown: 1.0,
+      hitFlash: 0,
+      wanderTimer: 5,
+      goalX: lp.x,
+      goalZ: lp.z,
+      drivingVehicleId: driving ? vanId : null,
+      driveInput: null,
+      driveGoalX: lp.x,
+      driveGoalZ: lp.z,
+      driveStuckTimer: 0
+    });
+
+    const driverId = `tck-drv-${uid}`;
+    const a1Id = `tck-a1-${uid}`;
+    const a2Id = `tck-a2-${uid}`;
+    const driver = makeMilitaryNpc(driverId, "ТЦК Водитель", true);
+    van.driverId = driverId;
+    this.players.set(driverId, driver);
+
+    this.tckEvent = {
+      phase: "approach",
+      vanId,
+      driverId,
+      agentIds: [a1Id, a2Id],
+      makeAgent: (id, label) => makeMilitaryNpc(id, label, false),
+      timer: 0,
+      abductTimer: 0
+    };
+  }
+
+  updateTckEvent(dt) {
+    const ev = this.tckEvent;
+    if (!ev) return;
+    ev.timer += dt;
+
+    const lp = this.localPlayer;
+    const van = this.vehicles.find((v) => v.id === ev.vanId);
+    const driver = this.players.get(ev.driverId);
+
+    if (!van || (van.exploded && ev.phase !== "abduct")) {
+      this.tckEvent = null;
+      return;
+    }
+
+    if (ev.phase === "approach") {
+      if (!driver || !driver.alive || !lp.alive) {
+        this.tckEvent = null;
+        return;
+      }
+      driver.driveGoalX = lp.x;
+      driver.driveGoalZ = lp.z;
+      const dist = Math.hypot(van.x - lp.x, van.z - lp.z);
+      if (dist < 10.5 || ev.timer > 11.0) {
+        ev.phase = "chase";
+        driver.driveInput = { throttle: 0, steer: 0, handbrake: true };
+        // Spawn the 2 military agents jumping out beside the van
+        const cosA = Math.cos(van.angle), sinA = Math.sin(van.angle);
+        ev.agentIds.forEach((aid, idx) => {
+          const agent = ev.makeAgent(aid, `ТЦК-${idx + 1}`);
+          const side = idx === 0 ? 1.8 : -1.8;
+          const pos = resolveCityCollision(van.x + cosA * side, van.z - sinA * side, CONFIG.PLAYER_RADIUS);
+          agent.x = pos.x;
+          agent.z = pos.z;
+          agent.aggro = true;
+          this.players.set(aid, agent);
+        });
+      }
+      return;
+    }
+
+    if (ev.phase === "chase") {
+      if (driver) driver.driveInput = { throttle: 0, steer: 0, handbrake: true };
+      const agents = ev.agentIds.map((id) => this.players.get(id)).filter(Boolean);
+      const aliveAgents = agents.filter((a) => a.alive);
+
+      if (aliveAgents.length === 0 || !lp.alive || ev.timer > 32) {
+        this.tckEvent = null;
+        return;
+      }
+
+      for (const ag of aliveAgents) {
+        ag.goalX = lp.x;
+        ag.goalZ = lp.z;
+        const dx = lp.x - ag.x;
+        const dz = lp.z - ag.z;
+        const d = Math.hypot(dx, dz);
+        const ang = Math.atan2(dx, dz);
+        ag.aimYaw = ang;
+        ag.angle = lerpAngle(ag.angle, ang, 1 - Math.exp(-10 * dt));
+        ag.sprinting = true;
+        const spd = CONFIG.SPRINT_SPEED * 0.94;
+        const nx = clamp(ag.x + (dx / Math.max(0.1, d)) * spd * dt, -this.worldHalf, this.worldHalf);
+        const nz = clamp(ag.z + (dz / Math.max(0.1, d)) * spd * dt, -this.worldHalf, this.worldHalf);
+        const col = resolveCityCollision(nx, nz, CONFIG.PLAYER_RADIUS);
+        ag.x = col.x;
+        ag.z = col.z;
+        ag.moveSpeed = spd;
+        ag.walkPhase += dt * (4.5 + spd * 0.92);
+
+        // Grabbed the player!
+        if (d < 1.65 && !lp.drivingVehicleId) {
+          ev.phase = "abduct";
+          ev.abductTimer = 0;
+          for (const aid of ev.agentIds) this.players.delete(aid);
+          van.driverId = lp.id;
+          lp.drivingVehicleId = van.id;
+          van.flyingUp = true;
+          this.scoped = false;
+          this.pushEvent({ type: "car_horn" });
+          break;
+        }
+      }
+      return;
+    }
+
+    if (ev.phase === "abduct") {
+      ev.abductTimer += dt;
+      if (lp.alive) {
+        lp.drivingVehicleId = van.id;
+        lp.x = van.x;
+        lp.y = van.y + 0.05;
+        lp.z = van.z;
+      }
+      if (ev.abductTimer >= 3.0) {
+        van.flyingUp = false;
+        explodeVehicle(van, this);
+        if (lp.alive) {
+          this.applyDamage(lp, 999, { x: 0, y: 12, z: 0 }, null, true);
+        }
+        this.tckEvent = null;
+      }
+    }
+  }
+
   updateBot(p, dt) {
+    if (p.isTck && !p.drivingVehicleId) {
+      if (!p.alive) {
+        p.respawnTimer -= dt;
+        if (p.respawnTimer <= 0) this.players.delete(p.id);
+      }
+      return;
+    }
     if (!p.alive) {
       p.drivingVehicleId = null;
       p.driveInput = null;
@@ -1006,11 +1212,11 @@ export class PlaneGame {
         const curRx = roads.reduce((a, b) => (Math.abs(b - car.x) < Math.abs(a - car.x) ? b : a));
         const curRz = roads.reduce((a, b) => (Math.abs(b - car.z) < Math.abs(a - car.z) ? b : a));
 
-        // Ensure goal is on an orthogonal road from current intersection
+        // Ensure goal is on an orthogonal road from current intersection (unless TCK van chasing player)
         const gdx = (p.driveGoalX ?? curRx) - car.x;
         const gdz = (p.driveGoalZ ?? curRz) - car.z;
         const gdist = Math.hypot(gdx, gdz);
-        if (gdist < 8.5 || (Math.abs((p.driveGoalX ?? 0) - curRx) > 5 && Math.abs((p.driveGoalZ ?? 0) - curRz) > 5)) {
+        if (!p.isTck && (gdist < 8.5 || (Math.abs((p.driveGoalX ?? 0) - curRx) > 5 && Math.abs((p.driveGoalZ ?? 0) - curRz) > 5))) {
           const idxX = roads.indexOf(curRx);
           const idxZ = roads.indexOf(curRz);
           const candidates = [];

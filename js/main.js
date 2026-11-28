@@ -68,9 +68,21 @@ async function bootstrap() {
       window.history.replaceState(null, "", `#${discord.roomId}`);
     }
     game.setBotsEnabled(true);
-    const autoWsUrl = (window.location.protocol.startsWith("http") && !window.location.hostname.endsWith("github.io"))
-      ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`
-      : "";
+    let autoWsUrl = "";
+    if (window.location.protocol.startsWith("http") && !window.location.hostname.endsWith("github.io")) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 450);
+        const resp = await fetch("/health", { signal: ctrl.signal });
+        clearTimeout(t);
+        if (resp.ok) {
+          const info = await resp.json();
+          if (info && info.ok) {
+            autoWsUrl = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+          }
+        }
+      } catch {}
+    }
     network = new PartyNetwork({
       localId,
       roomId: discord.roomId,

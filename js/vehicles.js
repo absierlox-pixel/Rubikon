@@ -96,6 +96,28 @@ export const VEHICLE_TYPES = {
     driftGrip: 4.2,
     normalGrip: 8.8,
     colors: ["#3b4a38", "#23262b", "#7a6849", "#4f5661"]
+  },
+  van: {
+    id: "van",
+    name: "Бусик ТЦК",
+    width: 2.12,
+    length: 5.05,
+    height: 2.05,
+    wheelBase: 3.15,
+    trackWidth: 1.84,
+    wheelRadius: 0.39,
+    wheelWidth: 0.26,
+    mass: 2450,
+    maxHp: 580,
+    accel: 17.5,
+    reverseAccel: 11.0,
+    maxSpeed: 26.0,
+    brakeDecel: 28.0,
+    steerSpeed: 2.2,
+    maxSteer: 0.50,
+    driftGrip: 4.5,
+    normalGrip: 9.0,
+    colors: ["#3f4a32"]
   }
 };
 
@@ -477,15 +499,23 @@ export function updateVehicles(vehicles, players, game, dt) {
     v.forwardSpeed = fwdSpeed;
     v.speed = Math.hypot(v.vx, v.vz);
 
-    // Gravity / air bounce
-    v.vy -= CONFIG.GRAVITY * dt;
-    v.y += v.vy * dt;
-    if (v.y < 0) {
-      if (v.vy < -4.5) {
-        applyZoneDamage(v, 0, def.length * 0.3, Math.abs(v.vy) * 2.5, game);
+    // Gravity / air bounce (or TCK abduction upward flight!)
+    if (v.flyingUp) {
+      v.vy = 13.5;
+      v.y += v.vy * dt;
+      v.angle += 1.6 * dt;
+      v.roll = Math.sin(performance.now() * 0.008) * 0.14;
+      v.pitch = -0.18;
+    } else {
+      v.vy -= CONFIG.GRAVITY * dt;
+      v.y += v.vy * dt;
+      if (v.y < 0) {
+        if (v.vy < -4.5) {
+          applyZoneDamage(v, 0, def.length * 0.3, Math.abs(v.vy) * 2.5, game);
+        }
+        v.y = 0;
+        v.vy = 0;
       }
-      v.y = 0;
-      v.vy = 0;
     }
 
     // Integrate position & heading
@@ -603,6 +633,9 @@ export function updateVehicles(vehicles, players, game, dt) {
           };
           game.applyDamage(p, hitDmg, imp, v.driverId, v.speed > 12);
           applyZoneDamage(v, lx, lz, 4, game, { x: p.x, y: 0.8, z: p.z });
+          if (v.driverId === game.localId && typeof game.maybeTriggerTckEvent === "function") {
+            game.maybeTriggerTckEvent();
+          }
         }
       }
     }
@@ -813,12 +846,13 @@ export function createVehicleMesh(v) {
   const deformables = [];
   const W = def.width;
   const L = def.length;
-  const isSuv = v.typeId === "suv";
+  const isSuv = v.typeId === "suv" || v.typeId === "van";
+  const isVan = v.typeId === "van";
   const isSport = v.typeId === "sport";
   const isMuscle = v.typeId === "muscle";
 
-  const baseH = isSuv ? 0.54 : 0.36;
-  const bodyH = isSuv ? 0.66 : 0.48;
+  const baseH = isSuv ? 0.50 : 0.36;
+  const bodyH = isVan ? 0.82 : (isSuv ? 0.66 : 0.48);
 
   // Underbody chassis frame
   const underbody = new THREE.Mesh(new THREE.BoxGeometry(W * 0.88, 0.14, L * 0.90), sm.darkTrim);
