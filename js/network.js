@@ -25,8 +25,12 @@ export class PartyNetwork {
     this.serverUrl = (options.serverUrl || "").trim();
     this.onState = options.onState;
     this.logs = [];
+    this.lastStatusState = "connecting";
+    this.lastStatusText = "Инициализация...";
     this._rawOnStatus = options.onStatus || (() => {});
     this.onStatus = (state, text) => {
+      this.lastStatusState = state;
+      this.lastStatusText = text;
       this.addLog(`[${state}] ${text}`);
       this._rawOnStatus(state, text);
     };
@@ -34,6 +38,8 @@ export class PartyNetwork {
     this.onPeerLeave = options.onPeerLeave;
     this.onHit = options.onHit || (() => {});
     this.getLocalPlayer = options.getLocalPlayer;
+    this.getVehicles = options.getVehicles || null;
+    this.onVehicles = options.onVehicles || null;
 
     this.mode = this.serverUrl ? "ws" : "p2p";
     this.isHost = false;
@@ -143,6 +149,8 @@ export class PartyNetwork {
         }
         if (msg.type === "player" && msg.player) {
           this.handleRemotePlayer(msg.player);
+        } else if (msg.type === "vehicles" && Array.isArray(msg.vehicles) && this.onVehicles) {
+          this.onVehicles(msg.vehicles);
         } else if (msg.type === "leave" && msg.id) {
           this.removeRemotePlayer(msg.id);
         } else if (msg.type === "hit" && msg.hit) {
@@ -218,12 +226,13 @@ export class PartyNetwork {
       if (this.destroyed || this.peer !== peer) {
         return;
       }
+      this.addLog(`Host peer error: ${err?.type || "unknown"} ${err?.message || ""}`);
       if (err && err.type === "unavailable-id") {
         this.cleanupP2P();
         this.connectAsGuest(hostPeerId);
         return;
       }
-      this.onStatus("local", "Переподключение P2P...");
+      this.onStatus("local", `Переподключение P2P (${err?.type || "err"})...`);
       this.scheduleP2PReconnect(2000);
     });
 
@@ -260,6 +269,9 @@ export class PartyNetwork {
       if ((data.type === "join" || data.type === "state") && data.player && data.player.id) {
         entry.playerId = data.player.id;
         this.handleRemotePlayer({ ...data.player, isHost: false });
+        if (data.drivenVehicle && this.onVehicles) {
+          this.onVehicles([data.drivenVehicle], true);
+        }
       } else if (data.type === "leave" && data.id) {
         this.removeRemotePlayer(data.id);
         this.broadcastToGuests({ type: "leave", id: data.id }, conn.peer);
@@ -336,6 +348,9 @@ export class PartyNetwork {
           this.isHost = false;
           this.onStatus("online", "В партии (P2P)");
         } else if (data.type === "snapshot" && Array.isArray(data.players)) {
+          if (Array.isArray(data.vehicles) && this.onVehicles) {
+            this.onVehicles(data.vehicles, false);
+          }
           const activeIds = new Set();
           for (const p of data.players) {
             if (!p || !p.id || p.id === this.localId) {
@@ -531,6 +546,11 @@ export class PartyNetwork {
     if (!local) {
       return;
     }
+    const allVehicles = this.getVehicles ? this.getVehicles() : null;
+    const drivenVehicle = (allVehicles && local.drivingVehicleId)
+      ? allVehicles.find((v) => v.id === local.drivingVehicleId) || null
+      : null;
+
     if (this.channel) {
       try {
         this.channel.postMessage({
@@ -538,6 +558,13 @@ export class PartyNetwork {
           sender: this.localId,
           player: local
         });
+        if (drivenVehicle) {
+          this.channel.postMessage({
+            type: "vehicles",
+            sender: this.localId,
+            vehicles: [drivenVehicle]
+          });
+        }
       } catch {}
     }
 
@@ -548,14 +575,15 @@ export class PartyNetwork {
             { ...local, isHost: true },
             ...Array.from(this.peersSnapshot.values())
           ];
-          this.broadcastToGuests({ type: "snapshot", players });
+          this.broadcastToGuests({ type: "snapshot", players, vehicles: allVehicles });
         }
       } else if (this.hostConn && this.hostConn.open) {
         try {
           this.hostConn.send({
             type: "state",
             roomId: this.roomId,
-            player: local
+            player: local,
+            drivenVehicle
           });
         } catch {}
       }

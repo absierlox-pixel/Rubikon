@@ -116,6 +116,9 @@ export function createVehicleState(id, typeId, x, z, angle, colorIdx = 0) {
     id,
     typeId: def.id,
     name: def.name,
+    spawnX: x,
+    spawnZ: z,
+    spawnAngle: angle,
     x,
     y: 0,
     z,
@@ -125,6 +128,7 @@ export function createVehicleState(id, typeId, x, z, angle, colorIdx = 0) {
     angle,
     angVel: 0,
     steerAngle: 0,
+    steerBias: 0,
     wheelSpin: 0,
     speed: 0,
     forwardSpeed: 0,
@@ -137,11 +141,13 @@ export function createVehicleState(id, typeId, x, z, angle, colorIdx = 0) {
     hp: def.maxHp,
     maxHp: def.maxHp,
     exploded: false,
+    wreckTimer: 0,
     color,
     stripe: def.stripe || null,
     // Damage state
     zones: { front: 0, rear: 0, left: 0, right: 0 },
     appliedZones: { front: 0, rear: 0, left: 0, right: 0 },
+    impacts: [],
     glassHealth: 1.0,
     lightsBroken: { fl: false, fr: false, rl: false, rr: false },
     hoodPop: 0,
@@ -149,6 +155,7 @@ export function createVehicleState(id, typeId, x, z, angle, colorIdx = 0) {
     frontBumperDetached: false,
     rearBumperDetached: false,
     wheelDamage: [0, 0, 0, 0], // FL, FR, RL, RR
+    wheelsDetached: [false, false, false, false],
     smokeTimer: 0
   };
 }
@@ -203,7 +210,22 @@ export function applyZoneDamage(v, localX, localZ, amount, game, hitWorldPos = n
 
   const prevHp = v.hp;
   v.hp = Math.max(0, v.hp - amount);
-  const dmgNorm = clamp(amount / (def.maxHp * 0.38), 0, 0.8);
+  const dmgNorm = clamp(amount / (def.maxHp * 0.35), 0, 0.85);
+
+  // Queue localized soft-body impact for BeamNG-style vertex deformation
+  const impLen = Math.hypot(localX, localZ) || 1;
+  const hitY = hitWorldPos ? clamp(hitWorldPos.y - v.y, 0.25, def.height) : 0.68;
+  v.impacts.push({
+    lx: clamp(localX, -def.width * 0.52, def.width * 0.52),
+    ly: hitY,
+    lz: clamp(localZ, -def.length * 0.52, def.length * 0.52),
+    dx: -localX / impLen,
+    dy: 0.14,
+    dz: -localZ / impLen,
+    radius: clamp(0.95 + dmgNorm * 1.45, 0.95, 2.0),
+    strength: clamp(0.14 + dmgNorm * 0.62, 0.12, 0.58)
+  });
+  if (v.impacts.length > 24) v.impacts.shift();
 
   if (Math.abs(normZ) >= Math.abs(normX) * 0.85) {
     if (normZ >= 0) {
@@ -236,10 +258,17 @@ export function applyZoneDamage(v, localX, localZ, amount, game, hitWorldPos = n
     }
   }
 
-  // Wheel damage on corner hits
-  if (Math.abs(normZ) > 0.45 && Math.abs(normX) > 0.45) {
-    const wIdx = (normZ > 0 ? 0 : 2) + (normX > 0 ? 1 : 0);
-    v.wheelDamage[wIdx] = clamp(v.wheelDamage[wIdx] + dmgNorm * 1.5, 0, 1);
+  // Wheel / suspension alignment damage on corner hits
+  if (Math.abs(normZ) > 0.40 && Math.abs(normX) > 0.40) {
+    const wIdx = (normZ > 0 ? 0 : 2) + (normX > 0 ? 0 : 1);
+    v.wheelDamage[wIdx] = clamp(v.wheelDamage[wIdx] + dmgNorm * 1.6, 0, 1);
+    if (normZ > 0) {
+      v.steerBias = clamp(v.steerBias + (normX > 0 ? 0.08 : -0.08) * dmgNorm, -0.22, 0.22);
+    }
+    if (v.wheelDamage[wIdx] >= 0.94 && !v.wheelsDetached[wIdx]) {
+      v.wheelsDetached[wIdx] = true;
+      if (game) game.pushEvent({ type: "car_part", x: v.x, y: v.y + 0.4, z: v.z, color: "#191b1e" });
+    }
   }
 
   // Glass cracking/shattering
@@ -322,6 +351,16 @@ export function updateVehicles(vehicles, players, game, dt) {
 
   for (const v of vehicles) {
     const def = VEHICLE_TYPES[v.typeId];
+    if (v.exploded) {
+      v.wreckTimer = (v.wreckTimer || 0) + dt;
+      if (v.wreckTimer > 22) {
+        const fresh = createVehicleState(v.id, v.typeId, v.spawnX, v.spawnZ, v.spawnAngle, 0);
+        fresh.color = v.color;
+        fresh.stripe = v.stripe;
+        Object.assign(v, fresh);
+        continue;
+      }
+    }
     const driver = v.driverId ? players.get(v.driverId) : null;
     if (v.driverId && (!driver || !driver.alive || driver.drivingVehicleId !== v.id)) {
       v.driverId = null;
@@ -391,11 +430,12 @@ export function updateVehicles(vehicles, players, game, dt) {
         fwdSpeed *= Math.exp(-3.4 * dt);
       }
 
-      // Ackermann-like yaw rate
+      // Ackermann-like yaw rate + alignment pull from suspension damage
       if (Math.abs(fwdSpeed) > 0.25) {
         const turnDir = fwdSpeed >= 0 ? 1 : -1;
         const speedNorm = clamp(Math.abs(fwdSpeed) / 10, 0.2, 1.25);
-        const targetYawRate = v.steerAngle * def.steerSpeed * speedNorm * turnDir * (v.handbrake ? 1.35 : 1.0);
+        const effSteer = v.steerAngle + (v.steerBias || 0);
+        const targetYawRate = effSteer * def.steerSpeed * speedNorm * turnDir * (v.handbrake ? 1.35 : 1.0);
         v.angVel += (targetYawRate - v.angVel) * Math.min(1, dt * 11);
       } else {
         v.angVel *= Math.exp(-8 * dt);
@@ -660,50 +700,62 @@ function getSharedCarMats() {
   return sharedCarMats;
 }
 
-function makeDeformableBox(w, h, d, segW, segH, segD, mat, zoneName, deformables) {
-  const geo = new THREE.BoxGeometry(w, h, d, segW, segH, segD);
+function makeDeformableBox(w, h, d, segW, segH, segD, mat, zoneName, deformables, parentOffset = null) {
+  const geo = new THREE.BoxGeometry(w, h, d, Math.max(segW, 4), Math.max(segH, 3), Math.max(segD, 4));
   const posAttr = geo.attributes.position;
   const basePos = new Float32Array(posAttr.array.length);
   basePos.set(posAttr.array);
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
-  deformables.push({ mesh, geo, basePos, zone: zoneName });
+  deformables.push({ mesh, geo, basePos, zone: zoneName, parentOffset });
   return mesh;
 }
 
-function applyMeshCrumple(entry, amount) {
-  const pos = entry.geo.attributes.position;
-  const base = entry.basePos;
-  const z = entry.zone;
-  const amp = amount * 0.44;
-  for (let i = 0; i < pos.count; i++) {
-    const bx = base[i * 3];
-    const by = base[i * 3 + 1];
-    const bz = base[i * 3 + 2];
-    // Deterministic crumple wave per vertex
-    const wave = Math.sin(bx * 10.7 + by * 16.3 + bz * 12.1);
-    const wave2 = Math.cos(bx * 21.3 - bz * 18.7);
-    let dx = 0, dy = 0, dz = 0;
-    if (z === "front") {
-      dz = -Math.abs(wave) * amp - amp * 0.35;
-      dy = wave2 * amp * 0.55;
-      dx = wave * amp * 0.32;
-    } else if (z === "rear") {
-      dz = Math.abs(wave) * amp + amp * 0.35;
-      dy = wave2 * amp * 0.5;
-      dx = wave * amp * 0.32;
-    } else if (z === "left") {
-      dx = -Math.abs(wave) * amp - amp * 0.30;
-      dy = wave2 * amp * 0.42;
-    } else if (z === "right") {
-      dx = Math.abs(wave) * amp + amp * 0.30;
-      dy = wave2 * amp * 0.42;
+function applySoftBodyImpact(vm, imp) {
+  for (const entry of vm.deformables) {
+    const pos = entry.geo.attributes.position;
+    const ox = entry.mesh.position.x + (entry.parentOffset ? entry.parentOffset.x : 0);
+    const oy = entry.mesh.position.y + (entry.parentOffset ? entry.parentOffset.y : 0);
+    const oz = entry.mesh.position.z + (entry.parentOffset ? entry.parentOffset.z : 0);
+    let dirty = false;
+
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i);
+      const vy = pos.getY(i);
+      const vz = pos.getZ(i);
+      const wx = vx + ox;
+      const wy = vy + oy;
+      const wz = vz + oz;
+
+      const d = Math.hypot(wx - imp.lx, wy - imp.ly, wz - imp.lz);
+      if (d < imp.radius) {
+        const t = 1 - d / imp.radius;
+        const falloff = t * t;
+        // Sheet-metal crumple fold + rim bulge
+        const crease = Math.sin(wx * 14.2 + wy * 19.7 + wz * 15.3) * 0.26;
+        const push = imp.strength * falloff * (1 + crease);
+        const nx = vx + imp.dx * push;
+        const ny = vy + imp.dy * push + Math.abs(crease) * imp.strength * falloff * 0.45;
+        const nz = vz + imp.dz * push;
+        pos.setXYZ(i, nx, ny, nz);
+        dirty = true;
+      }
     }
-    pos.setXYZ(i, bx + dx, by + dy, bz + dz);
+    if (dirty) {
+      pos.needsUpdate = true;
+      entry.geo.computeVertexNormals();
+    }
   }
-  pos.needsUpdate = true;
-  entry.geo.computeVertexNormals();
+}
+
+function resetAllDeformables(vm) {
+  for (const entry of vm.deformables) {
+    const pos = entry.geo.attributes.position;
+    pos.array.set(entry.basePos);
+    pos.needsUpdate = true;
+    entry.geo.computeVertexNormals();
+  }
 }
 
 function buildWheelMesh(radius, width, sm) {
@@ -834,7 +886,7 @@ export function createVehicleMesh(v) {
 
   const hoodPivot = new THREE.Group();
   hoodPivot.position.set(0, baseH + bodyH * 0.88, L * 0.21);
-  const hoodMesh = makeDeformableBox(W * 0.82, 0.07, L * 0.29, 3, 1, 3, paintMat, "front", deformables);
+  const hoodMesh = makeDeformableBox(W * 0.82, 0.07, L * 0.29, 5, 2, 5, paintMat, "front", deformables, hoodPivot.position);
   hoodMesh.position.set(0, 0, L * 0.145);
   hoodMesh.rotation.x = isSport ? 0.08 : 0.03;
   hoodPivot.add(hoodMesh);
@@ -1007,14 +1059,15 @@ export function updateVehicleMesh(vm, v) {
   // Steering wheel
   vm.steerPivot.rotation.z = -v.steerAngle * 2.4;
 
-  // Wheels: spin, steer front, and damage camber/wobble
+  // Wheels: spin, steer front, detachment, and damage camber/wobble
   for (let i = 0; i < 4; i++) {
     const w = vm.wheels[i];
+    w.wheelPivot.visible = !(v.wheelsDetached && v.wheelsDetached[i]);
     const isFront = i < 2;
     w.wheelPivot.rotation.y = isFront ? v.steerAngle : 0;
     w.spinGroup.rotation.x = v.wheelSpin;
     const wd = v.wheelDamage[i] || 0;
-    w.wheelPivot.rotation.z = wd * (i % 2 === 0 ? 0.24 : -0.24) + Math.sin(v.wheelSpin) * wd * 0.12;
+    w.wheelPivot.rotation.z = wd * (i % 2 === 0 ? 0.28 : -0.28) + Math.sin(v.wheelSpin) * wd * 0.14;
   }
 
   // Hood pop & detached/bent parts
@@ -1044,7 +1097,7 @@ export function updateVehicleMesh(vm, v) {
     }
   }
 
-  // Exploded charred look
+  // Exploded charred look & respawn restore
   if (v.exploded && !vm.wasExploded) {
     vm.wasExploded = true;
     vm.paintMat.map = null;
@@ -1052,15 +1105,25 @@ export function updateVehicleMesh(vm, v) {
     vm.paintMat.roughness = 0.95;
     vm.paintMat.metalness = 0.08;
     vm.paintMat.needsUpdate = true;
+  } else if (!v.exploded && vm.wasExploded) {
+    vm.wasExploded = false;
+    vm.paintMat.map = createCarPaintTexture(v.color, v.stripe);
+    vm.paintMat.color.setHex(0xffffff);
+    vm.paintMat.roughness = 0.24;
+    vm.paintMat.metalness = 0.58;
+    vm.paintMat.needsUpdate = true;
+    for (const gm of vm.glassMeshes) {
+      gm.visible = true;
+      gm.material = sm.glassIntact;
+    }
+    resetAllDeformables(vm);
   }
 
-  // Vertex crumple deformation when zone damage changes
-  for (const z of ["front", "rear", "left", "right"]) {
-    if (Math.abs(v.zones[z] - v.appliedZones[z]) > 0.04) {
-      v.appliedZones[z] = v.zones[z];
-      for (const d of vm.deformables) {
-        if (d.zone === z) applyMeshCrumple(d, v.zones[z]);
-      }
+  // BeamNG-style localized soft-body impact deformation
+  if (v.impacts && v.impacts.length > 0) {
+    while (v.impacts.length > 0) {
+      const imp = v.impacts.shift();
+      applySoftBodyImpact(vm, imp);
     }
   }
 }

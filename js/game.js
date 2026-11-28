@@ -521,6 +521,12 @@ export class PlaneGame {
     if (target.hp <= 0) {
       target.alive = false;
       target.respawnTimer = CONFIG.RESPAWN_TIME;
+      if (target.drivingVehicleId) {
+        const car = this.vehicles.find((v) => v.id === target.drivingVehicleId);
+        if (car && car.driverId === target.id) car.driverId = null;
+        target.drivingVehicleId = null;
+        target.driveInput = null;
+      }
       this.pushEvent({
         type: "death",
         id: target.id,
@@ -556,6 +562,7 @@ export class PlaneGame {
       existing.isHost = Boolean(data.isHost);
       existing.hp = data.hp !== undefined ? data.hp : CONFIG.MAX_HP;
       existing.alive = nowAlive;
+      existing.drivingVehicleId = data.drivingVehicleId || null;
 
       if (data.attackSeq && data.attackSeq !== existing.attackSeq) {
         existing.attackSeq = data.attackSeq;
@@ -601,8 +608,57 @@ export class PlaneGame {
         attackCombo: 0,
         attackSeq: data.attackSeq || 0,
         hitFlash: 0,
-        isBot: false
+        isBot: false,
+        drivingVehicleId: data.drivingVehicleId || null
       });
+    }
+  }
+
+  getCompactVehicles() {
+    return this.vehicles.map((v) => ({
+      id: v.id,
+      x: Math.round(v.x * 100) / 100,
+      y: Math.round(v.y * 100) / 100,
+      z: Math.round(v.z * 100) / 100,
+      angle: Math.round(v.angle * 1000) / 1000,
+      vx: Math.round(v.vx * 100) / 100,
+      vz: Math.round(v.vz * 100) / 100,
+      steerAngle: Math.round(v.steerAngle * 100) / 100,
+      wheelSpin: Math.round(v.wheelSpin * 100) / 100,
+      hp: Math.round(v.hp),
+      exploded: v.exploded,
+      driverId: v.driverId,
+      glassHealth: Math.round(v.glassHealth * 100) / 100,
+      hoodPop: Math.round(v.hoodPop * 100) / 100,
+      hoodDetached: v.hoodDetached,
+      frontBumperDetached: v.frontBumperDetached,
+      rearBumperDetached: v.rearBumperDetached
+    }));
+  }
+
+  syncRemoteVehicles(list, fromGuest = false) {
+    if (!Array.isArray(list)) return;
+    for (const rv of list) {
+      const v = this.vehicles.find((item) => item.id === rv.id);
+      if (!v) continue;
+      if (this.localPlayer.drivingVehicleId === v.id) continue;
+      if (fromGuest && v.driverId && v.driverId !== rv.driverId) continue;
+      v.x += (rv.x - v.x) * 0.45;
+      v.y += (rv.y - v.y) * 0.45;
+      v.z += (rv.z - v.z) * 0.45;
+      v.angle = lerpAngle(v.angle, rv.angle, 0.45);
+      v.vx = rv.vx || 0;
+      v.vz = rv.vz || 0;
+      v.steerAngle = rv.steerAngle || 0;
+      v.wheelSpin = rv.wheelSpin || 0;
+      v.hp = rv.hp !== undefined ? rv.hp : v.hp;
+      v.exploded = Boolean(rv.exploded);
+      v.driverId = rv.driverId || null;
+      v.glassHealth = rv.glassHealth !== undefined ? rv.glassHealth : v.glassHealth;
+      v.hoodPop = rv.hoodPop || 0;
+      v.hoodDetached = Boolean(rv.hoodDetached);
+      v.frontBumperDetached = Boolean(rv.frontBumperDetached);
+      v.rearBumperDetached = Boolean(rv.rearBumperDetached);
     }
   }
 
@@ -717,9 +773,10 @@ export class PlaneGame {
     if (!lp.alive) {
       lp.drivingVehicleId = null;
       this.scoped = false;
+      if (!Number.isFinite(lp.respawnTimer)) lp.respawnTimer = CONFIG.RESPAWN_TIME;
       lp.respawnTimer -= dt;
       if (lp.respawnTimer <= 0) {
-        const sp = this.pickStreetSpawn();
+        const sp = this.pickStreetSpawn(false);
         lp.x = sp.x; lp.y = 0; lp.z = sp.z;
         lp.vx = 0; lp.vy = 0; lp.vz = 0;
         lp.kx = 0; lp.kz = 0;
@@ -922,9 +979,10 @@ export class PlaneGame {
     if (!p.alive) {
       p.drivingVehicleId = null;
       p.driveInput = null;
+      if (!Number.isFinite(p.respawnTimer)) p.respawnTimer = CONFIG.RESPAWN_TIME;
       p.respawnTimer -= dt;
       if (p.respawnTimer <= 0) {
-        const sp = this.pickStreetSpawn();
+        const sp = this.pickStreetSpawn(true);
         p.x = sp.x; p.y = 0; p.z = sp.z;
         p.vx = 0; p.vy = 0; p.vz = 0;
         p.kx = 0; p.kz = 0;
@@ -935,53 +993,109 @@ export class PlaneGame {
       return;
     }
 
-    // NPC Driving AI along city road grid
+    // NPC Driving AI along city road grid with obstacle avoidance & 3-point reverse recovery
     if (p.drivingVehicleId) {
       const car = this.vehicles.find((v) => v.id === p.drivingVehicleId);
-      if (!car || car.exploded || car.driverId !== p.id || car.hp < car.maxHp * 0.25) {
+      if (!car || car.exploded || car.driverId !== p.id || car.hp < car.maxHp * 0.20) {
         if (car && car.driverId === p.id) car.driverId = null;
         p.drivingVehicleId = null;
         p.driveInput = null;
         p.y = 0;
       } else {
         const roads = [-84, -42, 0, 42, 84];
-        const gdx = p.driveGoalX - car.x;
-        const gdz = p.driveGoalZ - car.z;
+        const curRx = roads.reduce((a, b) => (Math.abs(b - car.x) < Math.abs(a - car.x) ? b : a));
+        const curRz = roads.reduce((a, b) => (Math.abs(b - car.z) < Math.abs(a - car.z) ? b : a));
+
+        // Ensure goal is on an orthogonal road from current intersection
+        const gdx = (p.driveGoalX ?? curRx) - car.x;
+        const gdz = (p.driveGoalZ ?? curRz) - car.z;
         const gdist = Math.hypot(gdx, gdz);
-        if (gdist < 7.5) {
-          // Pick an adjacent intersection along X or Z road
-          const curRx = roads.reduce((a, b) => (Math.abs(b - car.x) < Math.abs(a - car.x) ? b : a));
-          const curRz = roads.reduce((a, b) => (Math.abs(b - car.z) < Math.abs(a - car.z) ? b : a));
-          if (Math.random() > 0.45) {
-            const idx = roads.indexOf(curRx);
-            const nextIdx = clamp(idx + (Math.random() > 0.5 ? 1 : -1), 0, roads.length - 1);
-            p.driveGoalX = roads[nextIdx];
-            p.driveGoalZ = curRz;
-          } else {
-            const idx = roads.indexOf(curRz);
-            const nextIdx = clamp(idx + (Math.random() > 0.5 ? 1 : -1), 0, roads.length - 1);
-            p.driveGoalX = curRx;
-            p.driveGoalZ = roads[nextIdx];
+        if (gdist < 8.5 || (Math.abs((p.driveGoalX ?? 0) - curRx) > 5 && Math.abs((p.driveGoalZ ?? 0) - curRz) > 5)) {
+          const idxX = roads.indexOf(curRx);
+          const idxZ = roads.indexOf(curRz);
+          const candidates = [];
+          if (idxX > 0) candidates.push({ x: roads[idxX - 1], z: curRz });
+          if (idxX < roads.length - 1) candidates.push({ x: roads[idxX + 1], z: curRz });
+          if (idxZ > 0) candidates.push({ x: curRx, z: roads[idxZ - 1] });
+          if (idxZ < roads.length - 1) candidates.push({ x: curRx, z: roads[idxZ + 1] });
+          // Prefer continuing forward rather than immediate U-turn
+          const fwdX = Math.sin(car.angle), fwdZ = Math.cos(car.angle);
+          candidates.sort((a, b) => {
+            const da = ((a.x - car.x) * fwdX + (a.z - car.z) * fwdZ);
+            const db = ((b.x - car.x) * fwdX + (b.z - car.z) * fwdZ);
+            return db - da;
+          });
+          const pickPool = candidates.slice(0, Math.min(3, candidates.length));
+          const next = pickPool[Math.floor(Math.random() * pickPool.length)];
+          p.driveGoalX = next.x;
+          p.driveGoalZ = next.z;
+        }
+
+        // 3 forward feeler rays (left, center, right) for walls & cars
+        const feelDist = 9.0;
+        const rayAngles = [0.42, 0, -0.42]; // +angle = left, -angle = right
+        const hits = rayAngles.map((off) => {
+          const a = car.angle + off;
+          return raycastCity(car.x, 0.7, car.z, Math.sin(a), 0, Math.cos(a), feelDist, 0.9);
+        });
+        // Check other vehicles ahead
+        let carAheadDist = feelDist;
+        let carAheadSide = 0;
+        const fX = Math.sin(car.angle), fZ = Math.cos(car.angle);
+        const rX = Math.cos(car.angle), rZ = -Math.sin(car.angle);
+        for (const other of this.vehicles) {
+          if (other.id === car.id) continue;
+          const ox = other.x - car.x, oz = other.z - car.z;
+          const fwdProj = ox * fX + oz * fZ;
+          const latProj = ox * rX + oz * rZ;
+          if (fwdProj > 1.0 && fwdProj < carAheadDist && Math.abs(latProj) < 2.6) {
+            carAheadDist = fwdProj;
+            carAheadSide = latProj; // >0 means other car is to our left
           }
         }
 
-        if (car.speed < 0.7) p.driveStuckTimer = (p.driveStuckTimer || 0) + dt;
-        else p.driveStuckTimer = 0;
-
-        const targetAngle = Math.atan2(p.driveGoalX - car.x, p.driveGoalZ - car.z);
-        const diff = angleDiff(car.angle, targetAngle);
-        if (p.driveStuckTimer > 1.2) {
-          p.driveInput = { throttle: -0.65, steer: diff > 0 ? -0.9 : 0.9, handbrake: false };
-          if (p.driveStuckTimer > 2.1) p.driveStuckTimer = 0;
+        const centerBlocked = Math.min(hits[1], carAheadDist) < 4.2;
+        if ((car.speed < 1.3 && !p.driveReverseTimer) || centerBlocked) {
+          p.driveStuckTimer = (p.driveStuckTimer || 0) + dt;
         } else {
-          const turnSharp = Math.abs(diff);
-          const throttle = turnSharp > 0.7 ? 0.35 : 0.62;
+          p.driveStuckTimer = Math.max(0, (p.driveStuckTimer || 0) - dt * 2);
+        }
+
+        if (p.driveStuckTimer > 0.55 || (centerBlocked && car.speed < 2.5)) {
+          p.driveReverseTimer = 1.45;
+          p.driveStuckTimer = 0;
+          // Steer while reversing so front swings away from blocked side
+          const leftClear = hits[0] + (carAheadSide > 0 ? -3 : 0);
+          const rightClear = hits[2] + (carAheadSide < 0 ? -3 : 0);
+          p.driveReverseSteer = leftClear > rightClear ? -0.95 : 0.95;
+        }
+
+        if ((p.driveReverseTimer || 0) > 0) {
+          p.driveReverseTimer -= dt;
           p.driveInput = {
-            throttle,
-            steer: clamp(diff * 1.6, -1, 1),
+            throttle: -0.85,
+            steer: p.driveReverseSteer || 0.85,
             handbrake: false
           };
+          return;
         }
+
+        const targetAngle = Math.atan2(p.driveGoalX - car.x, p.driveGoalZ - car.z);
+        let diff = angleDiff(car.angle, targetAngle);
+        // Obstacle avoidance steering bias
+        if (hits[0] < feelDist - 1.5) diff -= (1 - hits[0] / feelDist) * 0.85; // obstacle on left -> steer right
+        if (hits[2] < feelDist - 1.5) diff += (1 - hits[2] / feelDist) * 0.85; // obstacle on right -> steer left
+        if (carAheadDist < feelDist - 1.0) {
+          diff += (carAheadSide >= 0 ? -0.75 : 0.75);
+        }
+
+        const turnSharp = Math.abs(diff);
+        const throttle = carAheadDist < 4.8 ? 0.15 : (turnSharp > 0.65 ? 0.42 : 0.70);
+        p.driveInput = {
+          throttle,
+          steer: clamp(diff * 1.75, -1, 1),
+          handbrake: false
+        };
         return;
       }
     }

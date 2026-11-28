@@ -72,6 +72,8 @@ async function bootstrap() {
       roomId: discord.roomId,
       serverUrl: "",
       getLocalPlayer: () => game.localPlayer,
+      getVehicles: () => game.getCompactVehicles(),
+      onVehicles: (list, fromGuest) => game.syncRemoteVehicles(list, fromGuest),
       onState: (player) => game.upsertRemotePlayer(player),
       onHit: (hitData) => game.receiveNetworkHit(hitData),
       onPeerJoin: () => {},
@@ -252,6 +254,9 @@ async function bootstrap() {
       lobbyRoomInput.value = network ? network.roomId : discord.roomId;
       lobbyWsInput.value = network ? network.serverUrl : "";
       lobbyBotsBtn.textContent = `Боты: ${game.botsEnabled ? "ВКЛ" : "ВЫКЛ"}`;
+      if (network && lobbyStatusEl) {
+        lobbyStatusEl.textContent = `Статус: ${network.lastStatusText} (${network.mode.toUpperCase()})`;
+      }
       renderLobbyPlayers();
       if (document.pointerLockElement && document.exitPointerLock) {
         try { document.exitPointerLock(); } catch {}
