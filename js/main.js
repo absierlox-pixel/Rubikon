@@ -32,6 +32,10 @@ async function bootstrap() {
   const crosshair = document.getElementById("crosshair");
   const scopeOverlay = document.getElementById("scope-overlay");
   const ammoHud = document.getElementById("ammo-hud");
+  const carPrompt = document.getElementById("car-prompt");
+  const speedHud = document.getElementById("speed-hud");
+  const speedVal = document.getElementById("speed-val");
+  const carHpFill = document.getElementById("car-hp-fill");
 
   const localId = randomId();
   const color = CONFIG.COLORS[Math.floor(Math.random() * CONFIG.COLORS.length)];
@@ -226,6 +230,14 @@ async function bootstrap() {
       game.toggleViewMode();
       return;
     }
+    if (e.code === "KeyF" && !e.repeat && !game.wheelOpen) {
+      game.toggleEnterExitVehicle();
+      return;
+    }
+    if (e.code === "KeyH" && !e.repeat && !game.wheelOpen && game.localPlayer.drivingVehicleId) {
+      game.pushEvent({ type: "car_horn" });
+      return;
+    }
     if (e.code === "Escape" && game.wheelOpen) {
       closeWeaponWheel(false);
       return;
@@ -299,14 +311,37 @@ async function bootstrap() {
 
   function updateAmmoHud() {
     const lp = game.localPlayer;
-    const st = game.getAmmoState(lp.weapon);
-    if (!st) {
+    const drivingCar = lp.drivingVehicleId
+      ? game.vehicles.find((v) => v.id === lp.drivingVehicleId)
+      : null;
+
+    if (drivingCar) {
       ammoHud.classList.add("hidden");
+      carPrompt.classList.add("hidden");
+      speedHud.classList.remove("hidden");
+      const kmh = Math.round((drivingCar.speed || 0) * 3.6);
+      speedVal.innerHTML = `${kmh} <span class="speed-unit">КМ/Ч</span>`;
+      const pct = Math.max(0, Math.min(100, (drivingCar.hp / drivingCar.maxHp) * 100));
+      carHpFill.style.width = `${pct}%`;
     } else {
-      ammoHud.classList.remove("hidden");
-      ammoHud.textContent = lp.reloadingTimer > 0
-        ? `.../${st.reserve}`
-        : `${st.mag}/${st.reserve}`;
+      speedHud.classList.add("hidden");
+      const near = game.getNearestEnterableVehicle();
+      if (near) {
+        carPrompt.textContent = `[F] Сесть в ${near.name}`;
+        carPrompt.classList.remove("hidden");
+      } else {
+        carPrompt.classList.add("hidden");
+      }
+
+      const st = game.getAmmoState(lp.weapon);
+      if (!st) {
+        ammoHud.classList.add("hidden");
+      } else {
+        ammoHud.classList.remove("hidden");
+        ammoHud.textContent = lp.reloadingTimer > 0
+          ? `.../${st.reserve}`
+          : `${st.mag}/${st.reserve}`;
+      }
     }
 
     if (game.scoped) {

@@ -120,4 +120,20 @@ export class SoundFX {
   playJump() {
     this.playTone(170, 0.08, "sine", 0.04, 290);
   }
+
+  playCarCrash(intensity = 0.6) {
+    const g = Math.min(0.4, 0.14 + intensity * 0.24);
+    this.playNoise(0.24, 580, g, 95, "lowpass");
+    this.playTone(92, 0.18, "sawtooth", g * 0.7, 32);
+  }
+
+  playGlassShatter() {
+    this.playNoise(0.16, 4800, 0.16, 2200, "highpass");
+    this.playTone(2600, 0.06, "triangle", 0.06, 1400);
+  }
+
+  playHorn() {
+    this.playTone(340, 0.24, "sawtooth", 0.08, 336);
+    this.playTone(425, 0.24, "sawtooth", 0.07, 420);
+  }
 }

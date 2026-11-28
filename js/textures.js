@@ -304,3 +304,83 @@ export function createGunmetalTexture() {
   }
   return finalizeTex(c, 1, 1);
 }
+
+export function createCarPaintTexture(baseHex = "#b8252a", stripeHex = null) {
+  const { c, ctx } = makeCanvas(256, 256);
+  ctx.fillStyle = baseHex;
+  ctx.fillRect(0, 0, 256, 256);
+
+  // Subtle metallic flake shimmer
+  for (let i = 0; i < 3200; i++) {
+    const light = Math.random() > 0.5;
+    ctx.fillStyle = light ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.05)";
+    ctx.fillRect(Math.random() * 256, Math.random() * 256, 2, 2);
+  }
+
+  // Optional dual racing stripes
+  if (stripeHex) {
+    ctx.fillStyle = stripeHex;
+    ctx.fillRect(98, 0, 22, 256);
+    ctx.fillRect(136, 0, 22, 256);
+  }
+
+  return finalizeTex(c, 1, 1);
+}
+
+export function createCarbonFiberTexture() {
+  const { c, ctx } = makeCanvas(64, 64);
+  ctx.fillStyle = "#17191d";
+  ctx.fillRect(0, 0, 64, 64);
+  for (let y = 0; y < 64; y += 4) {
+    for (let x = 0; x < 64; x += 4) {
+      const shift = (y / 4) % 2 === 0 ? 0 : 2;
+      ctx.fillStyle = "#262a31";
+      ctx.fillRect((x + shift) % 64, y, 2, 3);
+    }
+  }
+  return finalizeTex(c, 4, 4);
+}
+
+export function createCrackedGlassTexture() {
+  const { c, ctx } = makeCanvas(256, 256);
+  ctx.fillStyle = "rgba(175, 215, 240, 0.25)";
+  ctx.fillRect(0, 0, 256, 256);
+
+  const centers = [
+    { x: 96, y: 112 },
+    { x: 174, y: 140 }
+  ];
+  for (const ctr of centers) {
+    ctx.strokeStyle = "rgba(240, 248, 255, 0.85)";
+    ctx.lineWidth = 1.4;
+    for (let r = 12; r <= 72; r += 16) {
+      ctx.beginPath();
+      ctx.arc(ctr.x, ctr.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2 + Math.random() * 0.2;
+      const len = 35 + Math.random() * 65;
+      ctx.beginPath();
+      ctx.moveTo(ctr.x, ctr.y);
+      ctx.lineTo(ctr.x + Math.cos(a) * len * 0.5, ctr.y + Math.sin(a) * len * 0.5);
+      ctx.lineTo(ctr.x + Math.cos(a + 0.12) * len, ctr.y + Math.sin(a + 0.12) * len);
+      ctx.stroke();
+    }
+  }
+  return finalizeTex(c, 1, 1);
+}
+
+export function createTireTreadTexture() {
+  const { c, ctx } = makeCanvas(128, 128);
+  ctx.fillStyle = "#191b1e";
+  ctx.fillRect(0, 0, 128, 128);
+  ctx.fillStyle = "#101114";
+  for (let y = 0; y < 128; y += 16) {
+    ctx.fillRect(0, y, 128, 5);
+    for (let x = 0; x < 128; x += 24) {
+      ctx.fillRect(x, y + 6, 10, 6);
+    }
+  }
+  return finalizeTex(c, 4, 1);
+}

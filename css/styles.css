@@ -58,6 +58,68 @@ body,
   z-index: 8;
 }
 
+.car-prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  transform: translateX(-50%);
+  padding: 8px 18px;
+  border-radius: 999px;
+  background: rgba(14, 17, 22, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f3f5f8;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  z-index: 8;
+}
+
+.speed-hud {
+  position: fixed;
+  right: 28px;
+  bottom: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+  z-index: 8;
+}
+
+.speed-val {
+  font-family: "Arial Black", "Arial Bold", Gadget, sans-serif;
+  font-size: 42px;
+  font-weight: 900;
+  line-height: 1;
+  color: #ffffff;
+  text-shadow: 0 3px 12px rgba(0, 0, 0, 0.85), 2px 2px 0 rgba(0, 0, 0, 0.75);
+}
+
+.speed-unit {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.75);
+  letter-spacing: 0.06em;
+}
+
+.car-hp-track {
+  width: 140px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.car-hp-fill {
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #e04f3d, #4cd964);
+  transition: width 0.1s linear;
+}
+
 /* AWP Sniper Scope Overlay */
 .scope-overlay {
   position: fixed;

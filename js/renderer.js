@@ -10,6 +10,7 @@ import {
 } from "./textures.js";
 import { createWeaponMesh } from "./weapons.js";
 import { RagdollInstance } from "./ragdoll.js";
+import { createVehicleMesh, updateVehicleMesh, VEHICLE_TYPES } from "./vehicles.js";
 
 function angleDiff(from, to) {
   let d = ((to - from + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -77,9 +78,13 @@ export class PlaneRenderer3D {
     this.fabricCache = new Map();
 
     this.playerMeshes = new Map();
+    this.vehicleMeshes = new Map();
     this.rocketMeshes = new Map();
     this.ragdolls = [];
     this.particles = [];
+    this.smokeParticles = [];
+    this.debris = [];
+    this.shockwaves = [];
     this.tracers = [];
     this.muzzleFlashes = [];
     this.explosions = [];
@@ -156,6 +161,28 @@ export class PlaneRenderer3D {
         dv.rotation.x = -Math.PI / 2;
         dv.position.set(rc, 0.02, pos);
         this.scene.add(dv);
+      }
+    }
+
+    // Zebra crosswalks at main intersections
+    const crossGeoH = new THREE.PlaneGeometry(0.55, 2.8);
+    const crossGeoV = new THREE.PlaneGeometry(2.8, 0.55);
+    const crossMat = new THREE.MeshBasicMaterial({ color: 0xe6e2d8 });
+    for (const rx of roadCoords) {
+      for (const rz of roadCoords) {
+        for (let s = -4.5; s <= 4.5; s += 1.5) {
+          for (const side of [-8.2, 8.2]) {
+            const ch = new THREE.Mesh(crossGeoH, crossMat);
+            ch.rotation.x = -Math.PI / 2;
+            ch.position.set(rx + s, 0.022, rz + side);
+            this.scene.add(ch);
+
+            const cv = new THREE.Mesh(crossGeoV, crossMat);
+            cv.rotation.x = -Math.PI / 2;
+            cv.position.set(rx + side, 0.022, rz + s);
+            this.scene.add(cv);
+          }
+        }
       }
     }
 
@@ -279,16 +306,35 @@ export class PlaneRenderer3D {
 
     const skinMat = new THREE.MeshStandardMaterial({ color: 0xe4b896, roughness: 0.65 });
     const sleeveMat = new THREE.MeshStandardMaterial({ map: this.getFabricTexture("#3a5f8a"), roughness: 0.78 });
+    const cuffMat = new THREE.MeshStandardMaterial({ color: 0x1b1d22, roughness: 0.6, metalness: 0.25 });
 
-    // Left & right FPS hands for melee / weapon support
+    // Detailed Left & Right FPS hands (sleeved forearm + cuff + palm + fingers + thumb)
     const makeFpsHand = (side) => {
       const g = new THREE.Group();
-      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.062, 0.42, 10), sleeveMat);
+      const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.066, 0.42, 12), sleeveMat);
       arm.rotation.x = Math.PI / 2;
-      arm.position.z = 0.24;
+      arm.position.z = 0.25;
       g.add(arm);
-      const fist = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
-      g.add(fist);
+
+      const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.058, 0.058, 0.04, 12), cuffMat);
+      cuff.rotation.x = Math.PI / 2;
+      cuff.position.z = 0.055;
+      g.add(cuff);
+
+      const palm = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.068, 0.092), skinMat);
+      palm.position.set(0, -0.005, -0.01);
+      g.add(palm);
+
+      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.082, 0.052, 0.065), skinMat);
+      fingers.position.set(0, 0.005, -0.068);
+      fingers.rotation.x = 0.38;
+      g.add(fingers);
+
+      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.032, 0.056), skinMat);
+      thumb.position.set(-side * 0.048, 0.018, -0.032);
+      thumb.rotation.y = side * 0.35;
+      g.add(thumb);
+
       g.position.set(side * 0.24, -0.24, -0.42);
       this.fpsRoot.add(g);
       return g;
@@ -318,92 +364,141 @@ export class PlaneRenderer3D {
     }
   }
 
-  // Smooth textured humanoid rig with weapon mounts on RIGHT HAND & TORSO
+  // Ultra-detailed layered humanoid rig with anatomical joints, sculpted face/hair, sneakers & weapon mounts
   createPlayerMesh(player) {
     const root = new THREE.Group();
 
     const jacketMat = new THREE.MeshStandardMaterial({
       map: this.getFabricTexture(player.color),
-      roughness: 0.78,
-      metalness: 0.05
+      roughness: 0.74,
+      metalness: 0.06
     });
+    const shirtMat = new THREE.MeshStandardMaterial({ color: 0x1d2026, roughness: 0.85, metalness: 0.02 });
     const pantsMat = new THREE.MeshStandardMaterial({
       map: this.denimTex,
-      roughness: 0.86,
+      roughness: 0.84,
       metalness: 0.04
     });
-    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe4b896, roughness: 0.66, metalness: 0.02 });
-    const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTex, roughness: 0.66, metalness: 0.02 });
-    const hairMat = new THREE.MeshStandardMaterial({ color: 0x221b16, roughness: 0.85, metalness: 0.04 });
-    const bootMat = new THREE.MeshStandardMaterial({ color: 0x1a1c20, roughness: 0.72, metalness: 0.14 });
+    const skinMat = new THREE.MeshStandardMaterial({ color: 0xe4b896, roughness: 0.64, metalness: 0.02 });
+    const faceMat = new THREE.MeshStandardMaterial({ map: this.faceTex, roughness: 0.64, metalness: 0.02 });
+    const hairMat = new THREE.MeshStandardMaterial({ color: 0x201914, roughness: 0.82, metalness: 0.06 });
+    const bootMat = new THREE.MeshStandardMaterial({ color: 0x181a1f, roughness: 0.65, metalness: 0.16 });
+    const soleMat = new THREE.MeshStandardMaterial({ color: 0xd8dce2, roughness: 0.88, metalness: 0.02 });
+    const metalMat = new THREE.MeshStandardMaterial({ color: 0xc5ccd6, roughness: 0.25, metalness: 0.88 });
 
     const pelvis = new THREE.Group();
     pelvis.position.y = 0.98;
     root.add(pelvis);
 
-    const hipMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.19, 0.22, 12), pantsMat);
+    const hipMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.185, 0.195, 0.22, 14), pantsMat);
     hipMesh.scale.set(1.18, 1, 0.78);
     hipMesh.castShadow = true;
     pelvis.add(hipMesh);
 
-    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.195, 0.195, 0.06, 12), bootMat);
-    belt.scale.set(1.18, 1, 0.8);
-    belt.position.y = 0.09;
+    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.20, 0.055, 14), bootMat);
+    belt.scale.set(1.18, 1, 0.81);
+    belt.position.y = 0.095;
     pelvis.add(belt);
+
+    const buckle = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.058, 0.025), metalMat);
+    buckle.position.set(0, 0.095, 0.162);
+    pelvis.add(buckle);
 
     const torso = new THREE.Group();
     torso.position.y = 0.11;
     pelvis.add(torso);
 
-    const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.20, 0.18, 0.24, 12), jacketMat);
+    const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.185, 0.25, 14), jacketMat);
     waist.scale.set(1.15, 1, 0.76);
-    waist.position.y = 0.12;
+    waist.position.y = 0.125;
     waist.castShadow = true;
     torso.add(waist);
 
-    const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.20, 0.36, 14), jacketMat);
-    chest.scale.set(1.16, 1, 0.74);
-    chest.position.y = 0.40;
+    const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.248, 0.205, 0.37, 16), jacketMat);
+    chest.scale.set(1.17, 1, 0.75);
+    chest.position.y = 0.41;
     chest.castShadow = true;
     torso.add(chest);
 
-    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.14, 0.08, 12), jacketMat);
-    collar.position.y = 0.60;
+    // Undershirt V-neck & metallic zipper
+    const undershirt = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.22, 0.04), shirtMat);
+    undershirt.position.set(0, 0.48, 0.165);
+    torso.add(undershirt);
+
+    const zipper = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.38, 0.02), metalMat);
+    zipper.position.set(0, 0.28, 0.175);
+    torso.add(zipper);
+
+    // Chest pocket flaps & collar lapels
+    for (const s of [-1, 1]) {
+      const pocket = new THREE.Mesh(new THREE.BoxGeometry(0.095, 0.07, 0.022), jacketMat);
+      pocket.position.set(s * 0.125, 0.41, 0.175);
+      torso.add(pocket);
+
+      const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.18, 0.03), jacketMat);
+      lapel.position.set(s * 0.075, 0.52, 0.168);
+      lapel.rotation.z = -s * 0.22;
+      torso.add(lapel);
+    }
+
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.115, 0.145, 0.085, 14), jacketMat);
+    collar.position.y = 0.605;
     torso.add(collar);
 
     const headPivot = new THREE.Group();
-    headPivot.position.y = 0.62;
+    headPivot.position.y = 0.625;
     torso.add(headPivot);
 
-    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.082, 0.12, 10), skinMat);
+    const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.084, 0.13, 12), skinMat);
     neck.position.y = 0.05;
     headPivot.add(neck);
 
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.185, 20, 16), faceMat);
-    head.position.y = 0.22;
-    head.scale.set(0.90, 1.06, 0.96);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.185, 22, 18), faceMat);
+    head.position.y = 0.225;
+    head.scale.set(0.90, 1.07, 0.96);
     head.rotation.y = -Math.PI / 2;
     head.castShadow = true;
     headPivot.add(head);
 
+    // Nose bridge & Ears
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.062, 0.045), skinMat);
+    nose.position.set(0, 0.215, 0.172);
+    nose.rotation.x = -0.18;
+    headPivot.add(nose);
+
+    for (const s of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.038, 8, 8), skinMat);
+      ear.scale.set(0.45, 1.0, 0.72);
+      ear.position.set(s * 0.168, 0.22, -0.01);
+      headPivot.add(ear);
+    }
+
+    // Layered Hair (main cap + top volume + back fade)
     const hair = new THREE.Mesh(
-      new THREE.SphereGeometry(0.196, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.58),
+      new THREE.SphereGeometry(0.195, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.56),
       hairMat
     );
-    hair.position.set(0, 0.24, -0.015);
-    hair.rotation.x = -0.22;
-    hair.scale.set(0.92, 1.04, 0.98);
+    hair.position.set(0, 0.245, -0.018);
+    hair.rotation.x = -0.24;
+    hair.scale.set(0.92, 1.04, 0.99);
     hair.castShadow = true;
     headPivot.add(hair);
 
+    const hairTop = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.065, 0.22), hairMat);
+    hairTop.position.set(0, 0.40, 0.01);
+    hairTop.rotation.x = 0.12;
+    headPivot.add(hairTop);
+
     const makeArm = (side) => {
       const shoulder = new THREE.Group();
-      shoulder.position.set(side * 0.29, 0.52, 0);
+      shoulder.position.set(side * 0.295, 0.525, 0);
       torso.add(shoulder);
 
-      shoulder.add(new THREE.Mesh(new THREE.SphereGeometry(0.095, 10, 10), jacketMat));
+      const shCap = new THREE.Mesh(new THREE.SphereGeometry(0.10, 12, 12), jacketMat);
+      shCap.castShadow = true;
+      shoulder.add(shCap);
 
-      const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.082, 0.070, 0.30, 10), jacketMat);
+      const upper = new THREE.Mesh(new THREE.CylinderGeometry(0.084, 0.072, 0.30, 12), jacketMat);
       upper.position.y = -0.15;
       upper.castShadow = true;
       shoulder.add(upper);
@@ -412,18 +507,36 @@ export class PlaneRenderer3D {
       elbow.position.y = -0.31;
       shoulder.add(elbow);
 
-      elbow.add(new THREE.Mesh(new THREE.SphereGeometry(0.068, 8, 8), jacketMat));
+      elbow.add(new THREE.Mesh(new THREE.SphereGeometry(0.070, 10, 10), jacketMat));
 
-      const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.066, 0.054, 0.28, 10), skinMat);
-      forearm.position.y = -0.14;
+      const sleeveCuff = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.066, 0.10, 12), jacketMat);
+      sleeveCuff.position.y = -0.04;
+      elbow.add(sleeveCuff);
+
+      const forearm = new THREE.Mesh(new THREE.CylinderGeometry(0.064, 0.052, 0.26, 12), skinMat);
+      forearm.position.y = -0.15;
       forearm.castShadow = true;
       elbow.add(forearm);
 
+      // Wristwatch on left arm
+      if (side < 0) {
+        const watch = new THREE.Mesh(new THREE.CylinderGeometry(0.056, 0.056, 0.024, 12), metalMat);
+        watch.position.y = -0.255;
+        elbow.add(watch);
+      }
+
       const hand = new THREE.Group();
       hand.position.y = -0.30;
-      const handMesh = new THREE.Mesh(new THREE.SphereGeometry(0.062, 10, 10), skinMat);
-      handMesh.castShadow = true;
-      hand.add(handMesh);
+      const palm = new THREE.Mesh(new THREE.BoxGeometry(0.062, 0.075, 0.082), skinMat);
+      palm.castShadow = true;
+      hand.add(palm);
+      const fingers = new THREE.Mesh(new THREE.BoxGeometry(0.056, 0.052, 0.048), skinMat);
+      fingers.position.set(0, -0.042, 0.022);
+      fingers.rotation.x = 0.35;
+      hand.add(fingers);
+      const thumb = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.044, 0.026), skinMat);
+      thumb.position.set(-side * 0.036, -0.015, 0.034);
+      hand.add(thumb);
       elbow.add(hand);
 
       return { shoulder, elbow, hand };
@@ -452,33 +565,46 @@ export class PlaneRenderer3D {
 
     const makeLeg = (side) => {
       const hip = new THREE.Group();
-      hip.position.set(side * 0.135, -0.05, 0);
+      hip.position.set(side * 0.138, -0.05, 0);
       pelvis.add(hip);
 
-      hip.add(new THREE.Mesh(new THREE.SphereGeometry(0.10, 10, 10), pantsMat));
+      hip.add(new THREE.Mesh(new THREE.SphereGeometry(0.104, 12, 12), pantsMat));
 
-      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.082, 0.42, 10), pantsMat);
+      const thigh = new THREE.Mesh(new THREE.CylinderGeometry(0.102, 0.084, 0.42, 12), pantsMat);
       thigh.position.y = -0.21;
       thigh.castShadow = true;
       hip.add(thigh);
+
+      const cargoPocket = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.15, 0.13), pantsMat);
+      cargoPocket.position.set(side * 0.095, -0.22, 0.01);
+      hip.add(cargoPocket);
 
       const knee = new THREE.Group();
       knee.position.y = -0.43;
       hip.add(knee);
 
-      knee.add(new THREE.Mesh(new THREE.SphereGeometry(0.080, 8, 8), pantsMat));
+      knee.add(new THREE.Mesh(new THREE.SphereGeometry(0.082, 10, 10), pantsMat));
 
-      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.062, 0.40, 10), pantsMat);
+      const shin = new THREE.Mesh(new THREE.CylinderGeometry(0.080, 0.064, 0.40, 12), pantsMat);
       shin.position.y = -0.20;
       shin.castShadow = true;
       knee.add(shin);
 
-      const boot = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.11, 0.26), bootMat);
-      boot.position.set(0, -0.43, 0.05);
-      boot.castShadow = true;
-      knee.add(boot);
+      const foot = new THREE.Group();
+      foot.position.set(0, -0.40, 0);
+      knee.add(foot);
 
-      return { hip, knee };
+      const bootUpper = new THREE.Mesh(new THREE.BoxGeometry(0.132, 0.085, 0.25), bootMat);
+      bootUpper.position.set(0, -0.02, 0.045);
+      bootUpper.castShadow = true;
+      foot.add(bootUpper);
+
+      const bootSole = new THREE.Mesh(new THREE.BoxGeometry(0.138, 0.035, 0.265), soleMat);
+      bootSole.position.set(0, -0.072, 0.048);
+      bootSole.castShadow = true;
+      foot.add(bootSole);
+
+      return { hip, knee, foot };
     };
 
     const leftLeg = makeLeg(-1);
@@ -500,15 +626,18 @@ export class PlaneRenderer3D {
     };
   }
 
-  // Full procedural bone animation: head/torso look-at twist, turn-in-place stepping, turn lean, weapon poses
-  animateRig(rig, player, dt) {
+  // Full procedural bone animation: driving, directional stride, ankle pitch, reload phases, weapon poses
+  animateRig(rig, player, dt, game = null) {
     const spd = player.moveSpeed || 0;
     const isMoving = spd > 0.35;
     const isSprinting = Boolean(player.sprinting && isMoving);
     const turningInPlace = !isMoving && (player.turnStepTimer || 0) > 0;
     const phase = player.walkPhase || 0;
     const inAir = (player.y || 0) > 0.08;
-    const wid = player.weapon || "fists";
+    const drivingCar = player.drivingVehicleId && game
+      ? game.vehicles.find((c) => c.id === player.drivingVehicleId)
+      : null;
+    const wid = drivingCar ? "fists" : (player.weapon || "fists");
     const rec = player.recoil || 0;
     const breath = Math.sin(this.time * 2.2 + (player.x || 0));
 
@@ -530,113 +659,140 @@ export class PlaneRenderer3D {
 
     let pelvisY = 0.98;
     let pelvisRoll = turnLean * (isMoving ? 0.8 : 0.25);
+    let pelvisYaw = 0;
     let torsoPitch = 0;
     let torsoYaw = aimDelta * 0.55;
     let headYaw = aimDelta * 0.45;
     let headPitch = aimPitch * 0.65;
 
-    let lHipX = 0, rHipX = 0, lKneeX = 0, rKneeX = 0;
+    let lHipX = 0, rHipX = 0, lKneeX = 0, rKneeX = 0, lFootX = 0, rFootX = 0;
     let lShX = 0, lShZ = 0.08, lElbX = -0.18;
     let rShX = 0, rShZ = -0.08, rElbX = -0.18;
 
-    // Lower body gait / turn-in-place stepping
-    if (inAir) {
-      lHipX = -0.45; rHipX = 0.22;
-      lKneeX = 0.78; rKneeX = 0.38;
+    if (drivingCar) {
+      const steer = drivingCar.steerAngle || 0;
+      pelvisY = 0.52;
+      pelvisRoll = -(drivingCar.roll || 0) * 0.6;
+      torsoPitch = -0.14;
+      torsoYaw = 0;
+      headYaw = steer * 0.55;
+      headPitch = 0.04;
+      lHipX = -1.32; rHipX = -1.32;
+      lKneeX = 1.38; rKneeX = 1.38;
+      lFootX = 0.25; rFootX = 0.25;
+      lShX = -1.05 - steer * 0.35; lShZ = 0.14; lElbX = -0.58;
+      rShX = -1.05 + steer * 0.35; rShZ = -0.14; rElbX = -0.58;
+    } else if (inAir) {
+      lHipX = -0.48; rHipX = 0.24;
+      lKneeX = 0.85; rKneeX = 0.42;
+      lFootX = 0.25; rFootX = 0.15;
       torsoPitch = 0.08;
     } else if (isSprinting) {
       const s = Math.sin(phase);
       const c = Math.cos(phase);
-      pelvisY = 0.96 + Math.abs(c) * 0.085;
-      torsoPitch = 0.22;
-      torsoYaw += -s * 0.14;
-      lHipX = s * 0.88;
-      rHipX = -s * 0.88;
-      lKneeX = Math.max(0, -c) * 1.2 + 0.10;
-      rKneeX = Math.max(0, c) * 1.2 + 0.10;
-      lShX = -s * 0.9;
-      rShX = s * 0.9;
-      lElbX = -0.8 - Math.max(0, s) * 0.6;
-      rElbX = -0.8 - Math.max(0, -s) * 0.6;
+      pelvisY = 0.95 + Math.abs(c) * 0.09;
+      pelvisYaw = s * 0.09;
+      torsoPitch = 0.24;
+      torsoYaw += -s * 0.16;
+      lHipX = s * 0.92;
+      rHipX = -s * 0.92;
+      lKneeX = Math.max(0, -c) * 1.25 + 0.12;
+      rKneeX = Math.max(0, c) * 1.25 + 0.12;
+      lFootX = -s * 0.32;
+      rFootX = s * 0.32;
+      lShX = -s * 0.95;
+      rShX = s * 0.95;
+      lElbX = -0.85 - Math.max(0, s) * 0.65;
+      rElbX = -0.85 - Math.max(0, -s) * 0.65;
     } else if (isMoving) {
       const stride = Math.min(1, spd / CONFIG.WALK_SPEED);
-      const s = Math.sin(phase);
+      const dirSign = (player.forwardLocal || 1) < -0.2 ? -1 : 1;
+      const s = Math.sin(phase) * dirSign;
       const c = Math.cos(phase);
-      pelvisY = 0.98 + Math.abs(c) * 0.038 * stride;
-      torsoPitch = 0.05 * stride;
-      torsoYaw += -s * 0.06 * stride;
-      lHipX = s * 0.52 * stride;
-      rHipX = -s * 0.52 * stride;
-      lKneeX = Math.max(0, -c) * 0.68 * stride + 0.04;
-      rKneeX = Math.max(0, c) * 0.68 * stride + 0.04;
-      lShX = -s * 0.42 * stride;
-      rShX = s * 0.42 * stride;
-      lElbX = -0.20 - Math.max(0, s) * 0.32 * stride;
-      rElbX = -0.20 - Math.max(0, -s) * 0.32 * stride;
+      pelvisY = 0.98 + Math.abs(c) * 0.04 * stride;
+      pelvisYaw = s * 0.05 * stride;
+      torsoPitch = 0.05 * stride * dirSign;
+      torsoYaw += -s * 0.07 * stride;
+      lHipX = s * 0.54 * stride;
+      rHipX = -s * 0.54 * stride;
+      lKneeX = Math.max(0, -c) * 0.72 * stride + 0.05;
+      rKneeX = Math.max(0, c) * 0.72 * stride + 0.05;
+      lFootX = -s * 0.22 * stride;
+      rFootX = s * 0.22 * stride;
+      lShX = -s * 0.45 * stride;
+      rShX = s * 0.45 * stride;
+      lElbX = -0.22 - Math.max(0, s) * 0.34 * stride;
+      rElbX = -0.22 - Math.max(0, -s) * 0.34 * stride;
     } else if (turningInPlace) {
-      // Procedural foot lifting while rotating on the spot!
       const s = Math.sin(phase);
-      const c = Math.cos(phase);
       pelvisY = 0.97 + Math.abs(s) * 0.025;
       lHipX = Math.min(0, -s) * 0.32;
       rHipX = Math.min(0, s) * 0.32;
       lKneeX = Math.max(0, s) * 0.52;
       rKneeX = Math.max(0, -s) * 0.52;
     } else {
+      // Subtle idle breathing & weight shift
       pelvisY = 0.98 + breath * 0.012;
-      torsoPitch = 0.02 + breath * 0.01;
-      lShX = -0.05; rShX = -0.05;
+      torsoPitch = 0.02 + breath * 0.012;
+      headYaw += Math.sin(this.time * 0.7 + (player.z || 0)) * 0.05;
+      lShX = -0.05 + breath * 0.02;
+      rShX = -0.05 - breath * 0.02;
       lElbX = -0.18; rElbX = -0.18;
     }
 
     // Weapon-specific bone poses & exact hand alignment
-    if (wid === "glock") {
-      rig.weaponMount.position.set(0.18, 0.46, 0.52 - rec * 0.04);
-      rig.weaponMount.rotation.set(aimPitch - rec * 0.25, 0, 0);
-      rShX = -1.42 + aimPitch - rec * 0.18; rShZ = -0.12; rElbX = -0.18;
-      lShX = -1.38 + aimPitch - rec * 0.14; lShZ = 0.42;  lElbX = -0.24;
-    } else if (wid === "ak74" || wid === "awp") {
-      // Straight shouldered rifle alignment — right hand on pistol grip, left hand on wooden handguard
-      rig.weaponMount.position.set(0.16, 0.42 + rec * 0.015, 0.36 - rec * 0.07);
-      rig.weaponMount.rotation.set(aimPitch - rec * 0.12, 0, 0);
-      torsoYaw = aimDelta * 0.7 - 0.16;
-      rShX = -1.10 + aimPitch - rec * 0.12; rShZ = -0.18; rElbX = -0.95;
-      lShX = -1.25 + aimPitch - rec * 0.10; lShZ = 0.48;  lElbX = -0.68;
-    } else if (wid === "minigun") {
-      // Heavy underslung hip-fire stance
-      rig.weaponMount.position.set(0.14, 0.12, 0.38 - rec * 0.03);
-      rig.weaponMount.rotation.set(aimPitch * 0.6, 0, 0);
-      torsoPitch += 0.08;
-      rShX = -0.58; rShZ = -0.15; rElbX = -0.82;
-      lShX = -0.82; lShZ = 0.38;  lElbX = -0.65;
-    } else if (wid === "rpg") {
-      // Over-right-shoulder rocket launcher stance
-      rig.weaponMount.position.set(0.24, 0.62, 0.18 - rec * 0.10);
-      rig.weaponMount.rotation.set(aimPitch - rec * 0.15, 0, 0);
-      rShX = -1.55 + aimPitch; rShZ = -0.05; rElbX = -1.15;
-      lShX = -1.50 + aimPitch; lShZ = 0.46;  lElbX = -0.85;
-    } else if ((player.attackTimer || 0) > 0) {
-      // Clean melee punch (fists or brass knuckles)
-      const dur = player.attackDuration || 0.34;
-      const p = 1 - player.attackTimer / dur;
-      const punch = Math.sin(Math.min(1, p * 1.45) * Math.PI);
-      if ((player.attackCombo || 0) === 0 || wid === "knuckles") {
-        torsoYaw -= 0.58 * punch;
-        torsoPitch += 0.15 * punch;
-        rShX = -1.55 * punch - 0.15; rElbX = -0.12;
-        lShX = -0.45; lElbX = -1.1;
-      } else {
-        torsoYaw += 0.62 * punch;
-        torsoPitch += 0.15 * punch;
-        lShX = -1.50 * punch - 0.15; lElbX = -0.15;
-        rShX = -0.45; rElbX = -1.1;
+    if (!drivingCar) {
+      if (wid === "glock") {
+        rig.weaponMount.position.set(0.18, 0.46, 0.52 - rec * 0.04);
+        rig.weaponMount.rotation.set(aimPitch - rec * 0.25, 0, 0);
+        rShX = -1.42 + aimPitch - rec * 0.18; rShZ = -0.12; rElbX = -0.18;
+        lShX = -1.38 + aimPitch - rec * 0.14; lShZ = 0.42;  lElbX = -0.24;
+      } else if (wid === "ak74" || wid === "awp") {
+        rig.weaponMount.position.set(0.16, 0.42 + rec * 0.015, 0.36 - rec * 0.07);
+        rig.weaponMount.rotation.set(aimPitch - rec * 0.12, 0, 0);
+        torsoYaw = aimDelta * 0.7 - 0.16;
+        rShX = -1.10 + aimPitch - rec * 0.12; rShZ = -0.18; rElbX = -0.95;
+        lShX = -1.25 + aimPitch - rec * 0.10; lShZ = 0.48;  lElbX = -0.68;
+      } else if (wid === "minigun") {
+        rig.weaponMount.position.set(0.14, 0.12, 0.38 - rec * 0.03);
+        rig.weaponMount.rotation.set(aimPitch * 0.6, 0, 0);
+        torsoPitch += 0.08;
+        rShX = -0.58; rShZ = -0.15; rElbX = -0.82;
+        lShX = -0.82; lShZ = 0.38;  lElbX = -0.65;
+      } else if (wid === "rpg") {
+        rig.weaponMount.position.set(0.24, 0.62, 0.18 - rec * 0.10);
+        rig.weaponMount.rotation.set(aimPitch - rec * 0.15, 0, 0);
+        rShX = -1.55 + aimPitch; rShZ = -0.05; rElbX = -1.15;
+        lShX = -1.50 + aimPitch; lShZ = 0.46;  lElbX = -0.85;
+      } else if ((player.attackTimer || 0) > 0) {
+        const dur = player.attackDuration || 0.34;
+        const p = 1 - player.attackTimer / dur;
+        const punch = Math.sin(Math.min(1, p * 1.45) * Math.PI);
+        if ((player.attackCombo || 0) === 0 || wid === "knuckles") {
+          torsoYaw -= 0.58 * punch;
+          torsoPitch += 0.15 * punch;
+          rShX = -1.55 * punch - 0.15; rElbX = -0.12;
+          lShX = -0.45; lElbX = -1.1;
+        } else {
+          torsoYaw += 0.62 * punch;
+          torsoPitch += 0.15 * punch;
+          lShX = -1.50 * punch - 0.15; lElbX = -0.15;
+          rShX = -0.45; rElbX = -1.1;
+        }
       }
-    }
 
-    // Reload dip
-    if ((player.reloadingTimer || 0) > 0) {
-      rig.weaponMount.rotation.x += 0.45;
-      rig.weaponMount.position.y -= 0.08;
+      // Multi-phase reload animation (tilt rifle + left hand reaches down to mag well)
+      if ((player.reloadingTimer || 0) > 0) {
+        const relWave = Math.sin(this.time * 9.0) * 0.15;
+        rig.weaponMount.rotation.x += 0.42;
+        rig.weaponMount.rotation.z = 0.25;
+        rig.weaponMount.position.y -= 0.08;
+        lShX = -0.75 + relWave;
+        lShZ = 0.25;
+        lElbX = -1.15;
+      } else {
+        rig.weaponMount.rotation.z = 0;
+      }
     }
 
     // Hit flash
@@ -652,6 +808,7 @@ export class PlaneRenderer3D {
     const k = Math.min(1, dt * 16);
     rig.pelvis.position.y += (pelvisY - rig.pelvis.position.y) * k;
     rig.pelvis.rotation.z += (pelvisRoll - rig.pelvis.rotation.z) * k;
+    rig.pelvis.rotation.y += (pelvisYaw - rig.pelvis.rotation.y) * k;
     rig.torso.rotation.x += (torsoPitch - rig.torso.rotation.x) * k;
     rig.torso.rotation.y += (torsoYaw - rig.torso.rotation.y) * k;
     rig.headPivot.rotation.y += (headYaw - rig.headPivot.rotation.y) * k;
@@ -661,6 +818,8 @@ export class PlaneRenderer3D {
     rig.rightLeg.hip.rotation.x += (rHipX - rig.rightLeg.hip.rotation.x) * k;
     rig.leftLeg.knee.rotation.x += (lKneeX - rig.leftLeg.knee.rotation.x) * k;
     rig.rightLeg.knee.rotation.x += (rKneeX - rig.rightLeg.knee.rotation.x) * k;
+    rig.leftLeg.foot.rotation.x += (lFootX - rig.leftLeg.foot.rotation.x) * k;
+    rig.rightLeg.foot.rotation.x += (rFootX - rig.rightLeg.foot.rotation.x) * k;
 
     rig.leftArm.shoulder.rotation.x += (lShX - rig.leftArm.shoulder.rotation.x) * k;
     rig.leftArm.shoulder.rotation.z += (lShZ - rig.leftArm.shoulder.rotation.z) * k;
@@ -673,7 +832,7 @@ export class PlaneRenderer3D {
 
   updateFPSViewmodel(game, dt) {
     const lp = game.localPlayer;
-    const isFPS = game.viewMode === "fps" && lp.alive && !game.scoped;
+    const isFPS = game.viewMode === "fps" && lp.alive && !game.scoped && !lp.drivingVehicleId;
     this.fpsRoot.visible = isFPS;
     if (!isFPS) return;
 
@@ -756,8 +915,60 @@ export class PlaneRenderer3D {
     fireball.position.set(x, Math.max(0.5, y), z);
     this.scene.add(fireball);
     this.explosions.push({ mesh: fireball, mat: fireball.material, age: 0, maxAge: 0.55 });
+
+    // Expanding shockwave ring
+    const ringGeo = new THREE.RingGeometry(0.6, 1.15, 28);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0xffb35c,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.75
+    });
+    const ring = new THREE.Mesh(ringGeo, ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(x, 0.14, z);
+    this.scene.add(ring);
+    this.shockwaves.push({ mesh: ring, mat: ringMat, age: 0, maxAge: 0.45 });
+
     this.spawnImpactParticles(x, Math.max(0.5, y), z, 0xffaa33, 24);
     this.spawnImpactParticles(x, Math.max(0.5, y), z, 0x333333, 18);
+  }
+
+  spawnSmokePuff(x, y, z, colorHex = 0x555555, scale = 0.28) {
+    const geo = new THREE.DodecahedronGeometry(scale, 0);
+    const mat = new THREE.MeshBasicMaterial({ color: colorHex, transparent: true, opacity: 0.55 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x + (Math.random() - 0.5) * 0.25, y, z + (Math.random() - 0.5) * 0.25);
+    this.scene.add(mesh);
+    this.smokeParticles.push({
+      mesh, mat,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: 1.4 + Math.random() * 1.3,
+      vz: (Math.random() - 0.5) * 0.8,
+      age: 0,
+      maxAge: 0.75 + Math.random() * 0.45
+    });
+  }
+
+  spawnCarPartDebris(x, y, z, colorHex = "#444") {
+    const geo = new THREE.BoxGeometry(0.65, 0.08, 0.55);
+    const mat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.5, metalness: 0.4 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    this.scene.add(mesh);
+    const a = Math.random() * Math.PI * 2;
+    const spd = 4 + Math.random() * 7;
+    this.debris.push({
+      mesh, mat,
+      vx: Math.cos(a) * spd,
+      vy: 5.5 + Math.random() * 5.0,
+      vz: Math.sin(a) * spd,
+      rx: (Math.random() - 0.5) * 14,
+      ry: (Math.random() - 0.5) * 14,
+      age: 0,
+      maxAge: 3.5
+    });
   }
 
   spawnImpactParticles(x, y, z, colorHex, count = 10) {
@@ -825,6 +1036,21 @@ export class PlaneRenderer3D {
         if (sound) sound.playDeath();
       } else if (ev.type === "jump") {
         if (sound) sound.playJump();
+      } else if (ev.type === "car_crash") {
+        this.spawnImpactParticles(ev.x, ev.y, ev.z, 0xffcc55, Math.round(6 + (ev.intensity || 0.5) * 10));
+        this.shakeIntensity = Math.max(this.shakeIntensity, (ev.intensity || 0.5) * 0.28);
+        if (sound && sound.playCarCrash) sound.playCarCrash(ev.intensity || 0.5);
+      } else if (ev.type === "car_smoke") {
+        this.spawnSmokePuff(ev.x, ev.y, ev.z, ev.dark ? 0x242424 : 0xcccccc, ev.dark ? 0.34 : 0.25);
+      } else if (ev.type === "tire_smoke") {
+        this.spawnSmokePuff(ev.x, ev.y, ev.z, 0xd8dce0, 0.26);
+      } else if (ev.type === "glass_shatter") {
+        this.spawnImpactParticles(ev.x, ev.y, ev.z, 0xcceeff, 14);
+        if (sound && sound.playGlassShatter) sound.playGlassShatter();
+      } else if (ev.type === "car_part") {
+        this.spawnCarPartDebris(ev.x, ev.y, ev.z, ev.color);
+      } else if (ev.type === "car_horn") {
+        if (sound && sound.playHorn) sound.playHorn();
       }
     }
   }
@@ -867,7 +1093,20 @@ export class PlaneRenderer3D {
       if (rig.root.visible) {
         rig.root.position.set(player.x, player.y || 0, player.z);
         rig.root.rotation.y = player.angle || 0;
-        this.animateRig(rig, player, dt);
+        this.animateRig(rig, player, dt, game);
+      }
+    }
+
+    // Sync vehicles
+    if (game.vehicles) {
+      for (const v of game.vehicles) {
+        let vm = this.vehicleMeshes.get(v.id);
+        if (!vm) {
+          vm = createVehicleMesh(v);
+          this.scene.add(vm.root);
+          this.vehicleMeshes.set(v.id, vm);
+        }
+        updateVehicleMesh(vm, v);
       }
     }
 
@@ -963,6 +1202,57 @@ export class PlaneRenderer3D {
         this.particles.splice(i, 1);
       }
     }
+    for (let i = this.shockwaves.length - 1; i >= 0; i--) {
+      const sw = this.shockwaves[i];
+      sw.age += dt;
+      const t = sw.age / sw.maxAge;
+      sw.mesh.scale.setScalar(1 + t * 11.5);
+      sw.mat.opacity = Math.max(0, (1 - t) * 0.72);
+      if (sw.age >= sw.maxAge) {
+        this.scene.remove(sw.mesh);
+        sw.mesh.geometry.dispose();
+        sw.mat.dispose();
+        this.shockwaves.splice(i, 1);
+      }
+    }
+    for (let i = this.smokeParticles.length - 1; i >= 0; i--) {
+      const sp = this.smokeParticles[i];
+      sp.age += dt;
+      const t = sp.age / sp.maxAge;
+      sp.mesh.position.x += sp.vx * dt;
+      sp.mesh.position.y += sp.vy * dt;
+      sp.mesh.position.z += sp.vz * dt;
+      sp.mesh.scale.setScalar(1 + t * 2.4);
+      sp.mat.opacity = Math.max(0, (1 - t) * 0.52);
+      if (sp.age >= sp.maxAge) {
+        this.scene.remove(sp.mesh);
+        sp.mesh.geometry.dispose();
+        sp.mat.dispose();
+        this.smokeParticles.splice(i, 1);
+      }
+    }
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const db = this.debris[i];
+      db.age += dt;
+      db.vy -= 18 * dt;
+      db.mesh.position.x += db.vx * dt;
+      db.mesh.position.y += db.vy * dt;
+      db.mesh.position.z += db.vz * dt;
+      if (db.mesh.position.y < 0.06) {
+        db.mesh.position.y = 0.06;
+        db.vy *= -0.35;
+        db.vx *= 0.65;
+        db.vz *= 0.65;
+      }
+      db.mesh.rotation.x += db.rx * dt;
+      db.mesh.rotation.y += db.ry * dt;
+      if (db.age >= db.maxAge) {
+        this.scene.remove(db.mesh);
+        db.mesh.geometry.dispose();
+        db.mat.dispose();
+        this.debris.splice(i, 1);
+      }
+    }
 
     // Center shadow frustum on player
     const lp = game.localPlayer;
@@ -971,14 +1261,19 @@ export class PlaneRenderer3D {
       this.sunLight.target.position.set(lp.x, 0, lp.z);
     }
 
-    // Dynamic FOV (AWP sniper scope zoom vs normal)
-    const targetFov = game.scoped ? 18 : (game.viewMode === "fps" ? 74 : 58);
+    const drivingCar = lp.drivingVehicleId && game.vehicles
+      ? game.vehicles.find((c) => c.id === lp.drivingVehicleId)
+      : null;
+
+    // Dynamic FOV (AWP sniper scope zoom vs driving speed vs normal)
+    const speedFovBoost = drivingCar ? Math.min(14, (drivingCar.speed || 0) * 0.38) : 0;
+    const targetFov = game.scoped ? 18 : (game.viewMode === "fps" ? 74 : 58 + speedFovBoost);
     if (Math.abs(this.camera.fov - targetFov) > 0.1) {
-      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 16);
+      this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 12);
       this.camera.updateProjectionMatrix();
     }
 
-    // Camera positioning: 1st-Person vs 3rd-Person with PADDED anti-clipping collision
+    // Camera positioning: Driving vs 1st-Person vs 3rd-Person with PADDED anti-clipping collision
     const yaw = game.camYaw;
     const pitch = game.camPitch;
     const cosP = Math.cos(pitch);
@@ -993,7 +1288,36 @@ export class PlaneRenderer3D {
       this.shakeIntensity *= Math.exp(-16 * dt);
     }
 
-    if (game.viewMode === "fps" || game.scoped) {
+    if (drivingCar) {
+      if (game.viewMode === "fps") {
+        const sinA = Math.sin(drivingCar.angle);
+        const cosA = Math.cos(drivingCar.angle);
+        const eyeX = drivingCar.x - 0.40 * cosA + 0.15 * sinA;
+        const eyeY = drivingCar.y + 1.24;
+        const eyeZ = drivingCar.z + 0.40 * sinA + 0.15 * cosA;
+        this.camera.position.set(eyeX + sx * 0.25, eyeY + sy * 0.25, eyeZ);
+        this.camera.lookAt(eyeX - backX * 20, eyeY - backY * 20, eyeZ - backZ * 20);
+      } else {
+        const desiredDist = 7.4 * this.zoom;
+        const pivotX = drivingCar.x;
+        const pivotY = drivingCar.y + 1.55;
+        const pivotZ = drivingCar.z;
+        const safeDist = Math.max(
+          1.5,
+          raycastCity(pivotX, pivotY, pivotZ, backX, backY, backZ, desiredDist, 0.55)
+        );
+        if (safeDist < this.camDistCurrent) {
+          this.camDistCurrent = safeDist;
+        } else {
+          this.camDistCurrent += (safeDist - this.camDistCurrent) * Math.min(1, dt * 10);
+        }
+        const camX = pivotX + backX * this.camDistCurrent;
+        const camY = Math.max(0.75, pivotY + backY * this.camDistCurrent);
+        const camZ = pivotZ + backZ * this.camDistCurrent;
+        this.camera.position.set(camX + sx, camY + sy, camZ);
+        this.camera.lookAt(pivotX - backX * 14, pivotY - backY * 14, pivotZ - backZ * 14);
+      }
+    } else if (game.viewMode === "fps" || game.scoped) {
       const eyeX = lp.x;
       const eyeY = (lp.y || 0) + 1.66;
       const eyeZ = lp.z;

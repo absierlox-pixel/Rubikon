@@ -1,5 +1,11 @@
 import { CONFIG, WEAPON_DEFS } from "./config.js";
 import { resolveCityCollision, raycastCity } from "./city.js";
+import {
+  createInitialVehicles,
+  updateVehicles,
+  damageVehicleFromHit,
+  VEHICLE_TYPES
+} from "./vehicles.js";
 
 function clamp(val, min, max) {
   return Math.max(min, Math.min(max, val));
@@ -35,6 +41,7 @@ export class PlaneGame {
 
     this.events = [];
     this.rockets = [];
+    this.vehicles = createInitialVehicles();
     this.worldHalf = CONFIG.WORLD_SIZE / 2 - 2.0;
 
     this.weaponAmmo = makeInitialAmmo();
@@ -81,7 +88,8 @@ export class PlaneGame {
       attackCombo: 0,
       attackSeq: 0,
       lastAttackTime: 0,
-      hitFlash: 0
+      hitFlash: 0,
+      drivingVehicleId: null
     };
 
     this.players.set(localId, this.localPlayer);
@@ -158,9 +166,59 @@ export class PlaneGame {
     this.pushEvent({ type: "reload" });
   }
 
+  getNearestEnterableVehicle() {
+    const lp = this.localPlayer;
+    if (!lp.alive || lp.drivingVehicleId) return null;
+    let best = null;
+    let bestDist = 3.6;
+    for (const v of this.vehicles) {
+      if (v.exploded || v.driverId) continue;
+      const d = Math.hypot(v.x - lp.x, v.z - lp.z);
+      if (d < bestDist) {
+        bestDist = d;
+        best = v;
+      }
+    }
+    return best;
+  }
+
+  toggleEnterExitVehicle() {
+    const lp = this.localPlayer;
+    if (!lp.alive) return false;
+    if (lp.drivingVehicleId) {
+      const car = this.vehicles.find((v) => v.id === lp.drivingVehicleId);
+      if (car) {
+        car.driverId = null;
+        const cosA = Math.cos(car.angle);
+        const sinA = Math.sin(car.angle);
+        const exitPos = resolveCityCollision(
+          car.x - cosA * 1.75,
+          car.z + sinA * 1.75,
+          CONFIG.PLAYER_RADIUS
+        );
+        lp.x = exitPos.x;
+        lp.z = exitPos.z;
+        lp.y = 0;
+        lp.vx = car.vx * 0.25;
+        lp.vz = car.vz * 0.25;
+      }
+      lp.drivingVehicleId = null;
+      return true;
+    }
+
+    const near = this.getNearestEnterableVehicle();
+    if (!near) return false;
+    near.driverId = lp.id;
+    lp.drivingVehicleId = near.id;
+    lp.reloadingTimer = 0;
+    this.scoped = false;
+    this.camYaw = near.angle + Math.PI;
+    return true;
+  }
+
   triggerJump() {
     const lp = this.localPlayer;
-    if (!lp.alive || lp.y > 0.05) return false;
+    if (!lp.alive || lp.drivingVehicleId || lp.y > 0.05) return false;
     lp.vy = CONFIG.JUMP_VELOCITY;
     this.pushEvent({ type: "jump", id: lp.id });
     return true;
@@ -168,7 +226,7 @@ export class PlaneGame {
 
   triggerPrimaryAction() {
     const lp = this.localPlayer;
-    if (!lp.alive || this.wheelOpen || this.attackCooldown > 0) return false;
+    if (!lp.alive || lp.drivingVehicleId || this.wheelOpen || this.attackCooldown > 0) return false;
     const def = WEAPON_DEFS[lp.weapon] || WEAPON_DEFS.fists;
     if (def.type === "melee") return this.performMelee(def);
     if (def.type === "gun") return this.fireHitscan(def);
@@ -248,6 +306,7 @@ export class PlaneGame {
 
     let hitDist = raycastCity(ox, oy, oz, rdx, rdy, rdz, def.range, 0);
     let hitTarget = null;
+    let hitVehicle = null;
     let isHeadshot = false;
 
     for (const [id, target] of this.players.entries()) {
@@ -265,7 +324,27 @@ export class PlaneGame {
       if (radialDist < 0.48 && py >= baseY && py <= baseY + 2.02) {
         hitDist = proj;
         hitTarget = target;
+        hitVehicle = null;
         isHeadshot = py >= baseY + 1.60;
+      }
+    }
+
+    for (const v of this.vehicles) {
+      const vDef = VEHICLE_TYPES[v.typeId];
+      const tx = v.x - ox;
+      const tz = v.z - oz;
+      const proj = tx * rdx + tz * rdz;
+      if (proj < 0.3 || proj > hitDist) continue;
+      const px = ox + rdx * proj;
+      const py = oy + rdy * proj;
+      const pz = oz + rdz * proj;
+      const sinA = Math.sin(v.angle), cosA = Math.cos(v.angle);
+      const lx = (px - v.x) * cosA - (pz - v.z) * sinA;
+      const lz = (px - v.x) * sinA + (pz - v.z) * cosA;
+      if (Math.abs(lx) <= vDef.width * 0.55 && Math.abs(lz) <= vDef.length * 0.55 && py >= v.y && py <= v.y + vDef.height + 0.15) {
+        hitDist = proj;
+        hitTarget = null;
+        hitVehicle = v;
       }
     }
 
@@ -278,13 +357,16 @@ export class PlaneGame {
       id: lp.id,
       weaponId: def.id,
       ox, oy, oz, ex, ey, ez,
-      hitWall: !hitTarget && hitDist < def.range - 0.5
+      hitWall: (!hitTarget && hitDist < def.range - 0.5) || Boolean(hitVehicle)
     });
 
     if (hitTarget) {
       const dmg = isHeadshot ? def.damage * 2 : def.damage;
       const imp = { x: rdx * def.knockback, y: 2.8, z: rdz * def.knockback };
       this.deliverHit(hitTarget, dmg, imp, isHeadshot || def.id === "awp");
+    } else if (hitVehicle) {
+      const imp = { x: rdx * def.knockback * 0.35, y: 0.4, z: rdz * def.knockback * 0.35 };
+      damageVehicleFromHit(hitVehicle, ex, ey, ez, def.damage, imp, this);
     }
 
     this.camPitch = clamp(this.camPitch - def.camKick, -1.15, 1.15);
@@ -362,6 +444,22 @@ export class PlaneGame {
       } else {
         this.deliverHit(target, dmg, imp, true);
       }
+    }
+
+    for (const v of this.vehicles) {
+      const dx = v.x - r.x;
+      const dy = (v.y + 0.6) - r.y;
+      const dz = v.z - r.z;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist > r.splashRadius) continue;
+      const falloff = Math.max(0.25, 1 - dist / r.splashRadius);
+      const inv = 1 / Math.max(0.1, dist);
+      const imp = {
+        x: dx * inv * r.knockback * 2.2 * falloff,
+        y: (9.0 + Math.max(0, dy * inv) * 5) * falloff,
+        z: dz * inv * r.knockback * 2.2 * falloff
+      };
+      damageVehicleFromHit(v, r.x, r.y, r.z, r.damage * falloff * 1.4, imp, this);
     }
   }
 
@@ -587,6 +685,7 @@ export class PlaneGame {
     }
 
     if (!lp.alive) {
+      lp.drivingVehicleId = null;
       this.scoped = false;
       lp.respawnTimer -= dt;
       if (lp.respawnTimer <= 0) {
@@ -598,6 +697,15 @@ export class PlaneGame {
         lp.reloadingTimer = 0;
         this.weaponAmmo = makeInitialAmmo();
         lp.alive = true;
+      }
+    } else if (lp.drivingVehicleId) {
+      const car = this.vehicles.find((v) => v.id === lp.drivingVehicleId);
+      if (!car || car.exploded) {
+        lp.drivingVehicleId = null;
+      } else if (Math.abs(car.forwardSpeed) > 2.2) {
+        // Gentle chase-cam alignment behind moving car
+        const desiredYaw = car.angle + Math.PI;
+        this.camYaw = lerpAngle(this.camYaw, desiredYaw, 1 - Math.exp(-2.2 * dt));
       }
     } else {
       let forward = 0;
@@ -705,6 +813,9 @@ export class PlaneGame {
       }
     }
 
+    // Update vehicles & vehicle physics
+    updateVehicles(this.vehicles, this.players, this, dt);
+
     // Update flying RPG rockets
     for (let i = this.rockets.length - 1; i >= 0; i--) {
       const r = this.rockets[i];
@@ -734,6 +845,15 @@ export class PlaneGame {
           if (id === r.ownerId || !target.alive) continue;
           const d = Math.hypot(target.x - r.x, ((target.y || 0) + 1.0) - r.y, target.z - r.z);
           if (d < 0.85) {
+            exploded = true;
+            break;
+          }
+        }
+      }
+      if (!exploded) {
+        for (const v of this.vehicles) {
+          const d = Math.hypot(v.x - r.x, (v.y + 0.7) - r.y, v.z - r.z);
+          if (d < 1.9) {
             exploded = true;
             break;
           }
