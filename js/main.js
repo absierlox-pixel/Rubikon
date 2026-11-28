@@ -4,6 +4,7 @@ import { PartyNetwork } from "./network.js";
 import { SoundFX } from "./audio.js";
 import { PlaneGame } from "./game.js";
 import { PlaneRenderer3D } from "./renderer.js";
+import { BalanceMiniGame } from "./balanceGame.js";
 
 function randomId() {
   return Math.random().toString(36).slice(2, 10);
@@ -49,6 +50,21 @@ async function bootstrap() {
   const lobbyCopyLinkBtn = document.getElementById("lobby-copy-link-btn");
   const lobbyBotsBtn = document.getElementById("lobby-bots-btn");
   const lobbyPlayersList = document.getElementById("lobby-players-list");
+
+  const balanceGame = new BalanceMiniGame(
+    document.getElementById("balance-modal"),
+    document.getElementById("balance-canvas"),
+    document.getElementById("balance-score"),
+    document.getElementById("balance-best"),
+    document.getElementById("balance-hint")
+  );
+  const balanceCloseBtn = document.getElementById("balance-close-btn");
+  balanceCloseBtn.addEventListener("click", () => {
+    balanceGame.close();
+    if (!lobbyOpen && !game.wheelOpen && canvas.requestPointerLock) {
+      try { canvas.requestPointerLock(); } catch {}
+    }
+  });
 
   const localId = randomId();
   const color = CONFIG.COLORS[Math.floor(Math.random() * CONFIG.COLORS.length)];
@@ -334,6 +350,38 @@ async function bootstrap() {
 
   window.addEventListener("keydown", (e) => {
     sound.unlock();
+    if (e.code === "F5") {
+      e.preventDefault();
+      if (game.wheelOpen) closeWeaponWheel(false);
+      if (lobbyOpen) setLobbyOpen(false);
+      if (balanceGame.active) {
+        balanceGame.close();
+        if (canvas.requestPointerLock) {
+          try { canvas.requestPointerLock(); } catch {}
+        }
+      } else {
+        game.keys.clear();
+        game.mouseDown = false;
+        game.scoped = false;
+        if (document.pointerLockElement && document.exitPointerLock) {
+          try { document.exitPointerLock(); } catch {}
+        }
+        balanceGame.open();
+      }
+      return;
+    }
+    if (balanceGame.active) {
+      if (e.code === "Escape") {
+        balanceGame.close();
+        if (canvas.requestPointerLock) {
+          try { canvas.requestPointerLock(); } catch {}
+        }
+      } else if (e.code === "Space" && balanceGame.gameOver) {
+        e.preventDefault();
+        balanceGame.reset();
+      }
+      return;
+    }
     if (e.code === "F3") {
       e.preventDefault();
       if (game.wheelOpen) closeWeaponWheel(false);

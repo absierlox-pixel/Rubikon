@@ -55,6 +55,22 @@
       </div>
     </div>
 
+    <!-- F5 Balance Mini-Game Modal -->
+    <div class="lobby-modal hidden" id="balance-modal">
+      <div class="balance-card">
+        <div class="lobby-header">
+          <span>Баланс (F5 — вернуться в игру)</span>
+          <button class="lobby-close" id="balance-close-btn" type="button">✕</button>
+        </div>
+        <div class="balance-stats">
+          <span>Время: <strong id="balance-score">0.0</strong> сек</span>
+          <span>Рекорд: <strong id="balance-best">0.0</strong> сек</span>
+        </div>
+        <canvas class="balance-canvas" id="balance-canvas"></canvas>
+        <div class="balance-hint" id="balance-hint">Двигай мышкой влево/вправо, чтобы удержать шест!</div>
+      </div>
+    </div>
+
     <!-- Minimal Weapon Ammo HUD (Bottom-Right, Arial Black) -->
     <div class="ammo-hud hidden" id="ammo-hud">30/120</div>
 

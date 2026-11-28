@@ -299,6 +299,41 @@ body,
   justify-content: space-between;
 }
 
+/* F5 Balance Mini-Game */
+.balance-card {
+  width: min(760px, 94vw);
+  background: rgba(16, 20, 28, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 16px 18px;
+  color: #eef2f7;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.72);
+}
+
+.balance-stats {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  margin-bottom: 10px;
+  color: #c7d4e6;
+}
+
+.balance-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: ew-resize;
+}
+
+.balance-hint {
+  margin-top: 10px;
+  text-align: center;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
 /* AWP Sniper Scope Overlay */
 .scope-overlay {
   position: fixed;
